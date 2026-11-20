@@ -510,21 +510,11 @@
     if (!(event.target instanceof Element)) return;
 
     if (dragListId) {
-      const slot = event.target.closest('.list-add-slot');
-      if (slot) {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        clearListDropTargets(slot);
-        slot.classList.add('drop-target');
-        return;
-      }
-      const list = event.target.closest('.list');
-      if (list && list.dataset.list !== UNASSIGNED_LIST_ID) {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        clearListDropTargets(list);
-        list.classList.add(droppedBefore(event, list) ? 'drop-before' : 'drop-after');
-      }
+      // Anywhere on the board is a valid target, so the hint cannot go stale in
+      // the gaps between lists or over the "No status" column.
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      showListDropHint(listDropFromPointer(event.clientX));
       return;
     }
 
@@ -550,21 +540,12 @@
 
     if (dragListId) {
       const movedId = dragListId;
-      const slot = event.target.closest('.list-add-slot');
-      const list = event.target.closest('.list');
+      const index = listDropFromPointer(event.clientX);
       dragListId = null;
       event.preventDefault();
       clearListDropTargets();
       document.querySelectorAll('.list.dragging-list').forEach((el) => el.classList.remove('dragging-list'));
-
-      if (slot) {
-        postMoveList(movedId, null);
-        return;
-      }
-      if (list && list.dataset.list !== UNASSIGNED_LIST_ID) {
-        const anchorId = list.dataset.list;
-        postMoveList(movedId, droppedBefore(event, list) ? anchorId : nextListId(anchorId, movedId));
-      }
+      moveListTo(movedId, index);
       return;
     }
 
@@ -582,23 +563,61 @@
     api.postMessage({ type: 'moveCard', path: cardId, listId: listId });
   }
 
-  function droppedBefore(event, element) {
-    const rect = element.getBoundingClientRect();
-    return event.clientX < rect.left + rect.width / 2;
-  }
-
   /** Where a dropped card lands: the list body, or the strip of a collapsed list. */
   function cardDropZone(list) {
+    if (list.classList.contains('collapsed')) return list;
     return list.querySelector('.list-body') || list;
   }
 
-  function clearListDropTargets(except) {
+  /** Board lists in DOM order, minus the one being dragged. */
+  function remainingLists() {
+    return [...document.querySelectorAll('.list')].filter(
+      (list) => list.dataset.list !== UNASSIGNED_LIST_ID && list.dataset.list !== dragListId,
+    );
+  }
+
+  /**
+   * Final index a dragged list would take, counting the other lists only, so the
+   * value is already the position after the dragged list has been taken out.
+   * The dragged list itself is never a target, which keeps dropping a list onto
+   * its own column a no-op instead of sending it to the end.
+   */
+  function listDropFromPointer(clientX) {
+    const lists = remainingLists();
+    let index = 0;
+    for (const list of lists) {
+      const rect = list.getBoundingClientRect();
+      if (clientX > rect.left + rect.width / 2) index += 1;
+    }
+    return index;
+  }
+
+  /** Draws the insertion line exactly where the list would land. */
+  function showListDropHint(index) {
+    const lists = remainingLists();
+    clearListDropTargets();
+    if (lists.length === 0) return;
+    if (index >= lists.length) {
+      const slot = document.querySelector('.list-add-slot');
+      if (slot) slot.classList.add('drop-target');
+      return;
+    }
+    // The line sits between lists[index-1] and lists[index], drawn on whichever
+    // of the two columns already exists at that boundary.
+    if (index === 0) lists[0].classList.add('drop-before');
+    else lists[index - 1].classList.add('drop-after');
+  }
+
+  /** Sends a list move only when the final position differs from the current one. */
+  function moveListTo(listId, index) {
+    if (boardLists().findIndex((list) => list.id === listId) === index) return;
+    api.postMessage({ type: 'moveList', listId: listId, index: index });
+  }
+
+  function clearListDropTargets() {
     document
       .querySelectorAll('.list.drop-before, .list.drop-after, .list-add-slot.drop-target')
-      .forEach((element) => {
-        if (element === except) return;
-        element.classList.remove('drop-before', 'drop-after', 'drop-target');
-      });
+      .forEach((element) => element.classList.remove('drop-before', 'drop-after', 'drop-target'));
   }
 
   function clearCardDropTargets(except) {
@@ -618,30 +637,6 @@
     card.listTag = listId === UNASSIGNED_LIST_ID ? null : to.tag;
     to.cards.unshift(card);
     render();
-  }
-
-  /** Ids of the board lists without `excludedId`, i.e. the order left after a move. */
-  function listIdsWithout(excludedId) {
-    return boardLists().map((list) => list.id).filter((id) => id !== excludedId);
-  }
-
-  /** Final position of `movedId` when it is inserted before `beforeId` (or last). */
-  function projectedIndex(movedId, beforeId) {
-    const ids = listIdsWithout(movedId);
-    return beforeId === null ? ids.length : ids.indexOf(beforeId);
-  }
-
-  function nextListId(listId, movedId) {
-    const ids = listIdsWithout(movedId);
-    const index = ids.indexOf(listId);
-    return index === -1 || index === ids.length - 1 ? null : ids[index + 1];
-  }
-
-  function postMoveList(movedId, beforeId) {
-    const index = projectedIndex(movedId, beforeId);
-    if (index === -1) return;
-    if (boardLists().findIndex((list) => list.id === movedId) === index) return;
-    api.postMessage({ type: 'moveList', listId: movedId, index: index });
   }
 
   // --------------------------------------------------------------------- menu
