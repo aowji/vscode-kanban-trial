@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "license": "MIT",
   "publisher": "markdown-kanban",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aowji/vscode-kanban-trial.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
