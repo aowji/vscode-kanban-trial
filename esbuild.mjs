@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { build, context } from 'esbuild';
 
 const watch = process.argv.includes('--watch');
@@ -38,6 +39,9 @@ if (watch) {
   console.log('watching src -> dist/extension.js');
 } else {
   const targets = withTests ? [extension, tests] : [extension];
+  // esbuild leaves bundles of deleted test files behind, which the test runner
+  // would happily keep executing.
+  if (withTests) rmSync('dist-test', { recursive: true, force: true });
   await Promise.all(targets.map((options) => build(options)));
   console.log(withTests ? 'built extension and tests' : 'built extension');
 }
