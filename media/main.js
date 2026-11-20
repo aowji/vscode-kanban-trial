@@ -260,7 +260,7 @@
       '<header class="list-head"' + headAttrs + '>',
       '<button type="button" class="list-collapse" data-collapse-list="' + esc(list.id) +
         '" aria-expanded="' + (collapsed ? 'false' : 'true') + '" title="' + esc(toggleLabel) +
-        '" aria-label="' + esc(toggleLabel) + '">' + (collapsed ? '&#x276f;' : '&#x276e;') + '</button>',
+        '" aria-label="' + esc(toggleLabel) + '">' + (collapsed ? '&#x203a;' : '&#x2039;') + '</button>',
       '<span class="list-dot" aria-hidden="true"></span>',
       '<h2 class="list-title">' + esc(list.title) + '</h2>',
       '<span class="list-count">' + esc(count) + '</span>',
