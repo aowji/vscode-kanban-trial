@@ -15,6 +15,8 @@
   let menu = null;
   let addingList = false;
   let addListDraft = '';
+  /** Lists narrowed to a strip; a view preference, so it lives in webview state. */
+  const collapsedLists = new Set();
 
   const app = document.getElementById('app');
 
@@ -232,6 +234,7 @@
   }
 
   function listHtml(list) {
+    const collapsed = collapsedLists.has(list.id);
     const cards = list.cards.filter(cardMatchesFilters);
     const count = cards.length === list.cards.length
       ? String(list.cards.length)
@@ -251,9 +254,13 @@
       ? '<button type="button" class="list-menu" data-menu-list="' + esc(list.id) + '" aria-haspopup="menu" title="List actions" aria-label="List actions ' + esc(list.title) + '">&#x22ee;</button>' +
         '<button type="button" class="list-remove" data-remove-list="' + esc(list.id) + '" title="Remove list" aria-label="Remove list ' + esc(list.title) + '">&times;</button>'
       : '';
+    const toggleLabel = (collapsed ? 'Expand list ' : 'Collapse list ') + list.title;
     return [
-      '<section class="list" data-list="' + esc(list.id) + '">',
+      '<section class="list' + (collapsed ? ' collapsed' : '') + '" data-list="' + esc(list.id) + '">',
       '<header class="list-head"' + headAttrs + '>',
+      '<button type="button" class="list-collapse" data-collapse-list="' + esc(list.id) +
+        '" aria-expanded="' + (collapsed ? 'false' : 'true') + '" title="' + esc(toggleLabel) +
+        '" aria-label="' + esc(toggleLabel) + '">' + (collapsed ? '&#x276f;' : '&#x276e;') + '</button>',
       '<span class="list-dot" aria-hidden="true"></span>',
       '<h2 class="list-title">' + esc(list.title) + '</h2>',
       '<span class="list-count">' + esc(count) + '</span>',
@@ -399,6 +406,20 @@
       return;
     }
 
+    const collapseButton = event.target.closest('[data-collapse-list]');
+    if (collapseButton) {
+      event.stopPropagation();
+      toggleCollapsed(collapseButton.dataset.collapseList);
+      return;
+    }
+
+    // A collapsed list is a narrow strip: clicking anywhere on it expands it.
+    const collapsedList = event.target.closest('.list.collapsed');
+    if (collapsedList) {
+      toggleCollapsed(collapsedList.dataset.list);
+      return;
+    }
+
     const cardMenuButton = event.target.closest('[data-menu]');
     if (cardMenuButton) {
       event.stopPropagation();
@@ -434,6 +455,13 @@
       const button = card.querySelector('[data-menu]');
       if (button) openCardMenu(button, card.dataset.card);
     }
+  }
+
+  function toggleCollapsed(listId) {
+    if (collapsedLists.has(listId)) collapsedLists.delete(listId);
+    else collapsedLists.add(listId);
+    persist();
+    renderLists();
   }
 
   function toggleTag(tag) {
@@ -500,12 +528,13 @@
       return;
     }
 
-    const body = event.target.closest('.list-body');
-    if (!body) return;
+    const list = event.target.closest('.list');
+    if (!list) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    clearCardDropTargets(body);
-    body.classList.add('drop-target');
+    const zone = cardDropZone(list);
+    clearCardDropTargets(zone);
+    zone.classList.add('drop-target');
   }
 
   function onDragLeave(event) {
@@ -539,15 +568,15 @@
       return;
     }
 
-    const body = event.target.closest('.list-body');
-    if (!body) return;
+    const list = event.target.closest('.list');
+    if (!list) return;
     event.preventDefault();
     clearCardDropTargets();
     const cardId = dragCardId || event.dataTransfer.getData('text/plain');
     dragCardId = null;
     if (!cardId) return;
     const card = findCard(cardId);
-    const listId = body.dataset.list;
+    const listId = list.dataset.list;
     if (!card || card.listId === listId) return;
     optimisticMove(cardId, listId);
     api.postMessage({ type: 'moveCard', path: cardId, listId: listId });
@@ -556,6 +585,11 @@
   function droppedBefore(event, element) {
     const rect = element.getBoundingClientRect();
     return event.clientX < rect.left + rect.width / 2;
+  }
+
+  /** Where a dropped card lands: the list body, or the strip of a collapsed list. */
+  function cardDropZone(list) {
+    return list.querySelector('.list-body') || list;
   }
 
   function clearListDropTargets(except) {
@@ -568,8 +602,8 @@
   }
 
   function clearCardDropTargets(except) {
-    document.querySelectorAll('.list-body.drop-target').forEach((body) => {
-      if (body !== except) body.classList.remove('drop-target');
+    document.querySelectorAll('.list-body.drop-target, .list.drop-target').forEach((zone) => {
+      if (zone !== except) zone.classList.remove('drop-target');
     });
   }
 
@@ -650,6 +684,11 @@
     items.push({ label: 'Add list before', run: () => api.postMessage({ type: 'addList', index: at }) });
     items.push({ label: 'Add list after', run: () => api.postMessage({ type: 'addList', index: at + 1 }) });
     items.push({ separator: true });
+    items.push({
+      label: collapsedLists.has(listId) ? 'Expand list' : 'Collapse list',
+      run: () => toggleCollapsed(listId),
+    });
+    items.push({ separator: true });
     items.push({ label: 'Remove list', run: () => api.postMessage({ type: 'removeList', listId: listId }) });
     showMenu(anchor, items);
   }
@@ -702,7 +741,7 @@
   // ------------------------------------------------------------------ plumbing
 
   function persist() {
-    api.setState({ query: query, tags: [...tagFilter] });
+    api.setState({ query: query, tags: [...tagFilter], collapsed: [...collapsedLists] });
   }
 
   function restore() {
@@ -710,6 +749,9 @@
     if (!saved) return;
     if (typeof saved.query === 'string') query = saved.query;
     if (Array.isArray(saved.tags)) saved.tags.forEach((tag) => tagFilter.add(String(tag)));
+    if (Array.isArray(saved.collapsed)) {
+      saved.collapsed.forEach((listId) => collapsedLists.add(String(listId)));
+    }
   }
 
   window.addEventListener('message', (event) => {

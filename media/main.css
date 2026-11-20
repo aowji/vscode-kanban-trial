@@ -271,6 +271,7 @@ button {
   flex: 0 0 auto;
 }
 
+.list-collapse,
 .list-menu,
 .list-remove {
   border: none;
@@ -286,6 +287,11 @@ button {
   flex: 0 0 auto;
 }
 
+.list-collapse {
+  font-size: 10px;
+}
+
+.list-collapse:hover,
 .list-menu:hover,
 .list-remove:hover {
   opacity: 1;
@@ -397,6 +403,36 @@ button {
 }
 
 .list-body.drop-target {
+  background: var(--vscode-list-hoverBackground);
+  box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+}
+
+/* Collapsed list: a narrow strip that keeps the title and the count visible. */
+.list.collapsed {
+  flex: 0 0 44px;
+  width: 44px;
+}
+
+.list.collapsed .list-head {
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 4px;
+}
+
+.list.collapsed .list-dot,
+.list.collapsed .list-menu,
+.list.collapsed .list-remove,
+.list.collapsed .list-body {
+  display: none;
+}
+
+.list.collapsed .list-title {
+  writing-mode: vertical-rl;
+  flex: 0 0 auto;
+}
+
+.list.drop-target {
   background: var(--vscode-list-hoverBackground);
   box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
 }

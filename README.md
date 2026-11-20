@@ -12,7 +12,8 @@
 - 列由看板文件里的 `lists:` 决定；**默认只有 `No status` 一列**，其它 list 可在 `*.kb.yaml` 里写，也可以直接在看板界面增删：
   - 最右端 `+ Add list` 追加新列
   - 拖拽列头左右移动即可重排顺序（顺序错了不用删了重加）
-  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Remove list`，插入时弹出输入框
+  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Collapse list` / `Remove list`，插入时弹出输入框
+- **列可以折叠**：点列头左侧的 `❮` 收成窄条（只留竖排标题和计数），点窄条或 `❯` 展开；折叠的列照样能接收拖过来的卡片。折叠只是视图偏好（和搜索、标签过滤一样按窗口记住），不写进 `*.kb.yaml`
 - 没有列 tag 的文档进入最左侧的 “No status” 列；删除 list 不会丢失卡片原有 tag，卡片会自动回到 “No status”
 - **拖拽卡片换列**，或点卡片右上角的 `⋮` 菜单换列（键盘可用）
 - 换列只改 `*.kb.yaml`，Markdown 文档一个字节都不动

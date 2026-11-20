@@ -18,6 +18,7 @@
 - 命名对齐：`ParsedList` → `BoardList`、`BoardData` → `BoardFile`、`CardView.id/path` → `absPath/relPath`、`BoardState.context` → `meta`
 - `package.json` 删除冗余的 `activationEvents`（VS Code 1.74+ 会按贡献点自动生成）
 - 修复集成测试偶发失败：夹具写文件改为先写临时文件再 rename，避免测试读到半写状态
+- 列可以折叠成窄条（列头 `❮`）：暂时不关注的列不占横向空间，折叠状态下仍可拖卡片进去；折叠状态是视图偏好，不写进看板文件
 - 卡片展示标题、标签 chips、修改时间与正文首段摘要
 - 搜索与多标签过滤、文档与看板文件变更自动刷新
 - 窗口重载后看板自动恢复；输出面板 → Markdown Kanban 提供诊断日志
