@@ -8,6 +8,7 @@ import {
   deriveSummary,
   deriveTitle,
   scanDirectory,
+  stripFrontmatter,
 } from '../src/core/scan';
 
 let root = '';
@@ -19,7 +20,7 @@ before(async () => {
 
   await fs.writeFile(
     nodePath.join(root, 'todo-card.md'),
-    '---\ntitle: Front matter title\ntags:\n  - todo\n---\n\n# Ignored heading\n\nFirst paragraph of the card.\n\nSecond paragraph.\n',
+    '---\ntitle: Front matter title\ntags:\n  - todo\n---\n\n# Heading after front matter\n\nFirst paragraph of the card.\n\nSecond paragraph.\n',
   );
   await fs.writeFile(
     nodePath.join(root, 'notes', 'heading-card.markdown'),
@@ -66,7 +67,7 @@ test('scanDirectory returns titles, summaries and POSIX paths', async () => {
 
   const byPath = new Map(result.cards.map((card) => [card.relPath, card]));
   const todo = byPath.get('todo-card.md')!;
-  assert.equal(todo.title, 'Front matter title');
+  assert.equal(todo.title, 'Heading after front matter');
   assert.equal(todo.summary, 'First paragraph of the card.');
   assert.ok(todo.updated > 0);
 
@@ -83,29 +84,56 @@ test('scanDirectory can read from unsaved buffers', async () => {
   const result = await scanDirectory(root, {
     readText: async (absPath) =>
       absPath.endsWith('todo-card.md')
-        ? '---\ntitle: Edited but not saved\n---\n\n# Edited but not saved\n'
+        ? '---\ntitle: stub\n---\n\n# Unsaved heading\n\nUnsaved body.\n'
         : fs.readFile(absPath, 'utf8'),
   });
   const todo = result.cards.find((card) => card.relPath === 'todo-card.md')!;
-  assert.equal(todo.title, 'Edited but not saved');
+  assert.equal(todo.title, 'Unsaved heading');
 });
 
-test('scanDirectory surfaces broken front matter instead of dropping the card', async () => {
+test('scanDirectory surfaces an unclosed front matter block instead of dropping the card', async () => {
   const broken = nodePath.join(root, 'broken.md');
-  await fs.writeFile(broken, '---\ntags: [unclosed\n---\nbody\n');
+  await fs.writeFile(broken, '---\ntitle: never closed\n\n# body heading\n');
   try {
     const result = await scanDirectory(root);
     const card = result.cards.find((entry) => entry.relPath === 'broken.md')!;
-    assert.match(card.error ?? '', /Invalid front matter/);
+    assert.match(card.error ?? '', /no closing line/);
   } finally {
     await fs.rm(broken, { force: true });
   }
 });
 
-test('deriveTitle falls back to the file name', () => {
-  assert.equal(deriveTitle({}, 'nothing here', 'my-note.md'), 'my-note');
-  assert.equal(deriveTitle({ title: '  Titled  ' }, '', 'x.md'), 'Titled');
-  assert.equal(deriveTitle({ name: 'not used' }, '', 'from-name.md'), 'from-name');
+test('stripFrontmatter drops the metadata block', () => {
+  assert.equal(
+    stripFrontmatter('---\ntitle: T\ntags: [a]\n---\n\n# H\n\nBody.\n').body,
+    '\n# H\n\nBody.\n',
+  );
+  assert.equal(stripFrontmatter('---\ntitle: T\n...\nBody.\n').body, 'Body.\n');
+  assert.equal(stripFrontmatter('---\n---\nBody.\n').body, 'Body.\n');
+});
+
+test('stripFrontmatter leaves documents without front matter untouched', () => {
+  assert.deepEqual(stripFrontmatter('# Just a heading\n\ntext\n'), {
+    body: '# Just a heading\n\ntext\n',
+  });
+});
+
+test('stripFrontmatter handles BOM and CRLF documents', () => {
+  assert.equal(stripFrontmatter('\uFEFF---\r\ntitle: T\r\n---\r\nbody\r\n').body, 'body\r\n');
+});
+
+test('stripFrontmatter reports an unclosed block instead of eating the document', () => {
+  const text = '---\ntitle: T\n\n# heading\n';
+  assert.deepEqual(stripFrontmatter(text), {
+    body: text,
+    error: 'Front matter starts with "---" but has no closing line.',
+  });
+});
+
+test('deriveTitle prefers a heading and falls back to the file name', () => {
+  assert.equal(deriveTitle('nothing here', 'my-note.md'), 'my-note');
+  assert.equal(deriveTitle('#   Spaced heading  \n', 'x.md'), 'Spaced heading');
+  assert.equal(deriveTitle('#\n', 'from-name.markdown'), 'from-name');
 });
 
 test('deriveSummary stops at the first blank line and strips markup', () => {

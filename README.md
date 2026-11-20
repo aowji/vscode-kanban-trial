@@ -110,7 +110,7 @@ cards:
 npm run compile   # 打包 dist/extension.js
 npm run watch     # 监听编译
 npm run typecheck # tsc 类型检查
-npm test          # 53 个测试：front matter 读取 / 看板文件读写 / list 插入·重排·删除 / 分列 / 扫描 / 自定义编辑器集成
+npm test          # 57 个测试：文档扫描与摘要 / 看板文件读写 / list 插入·重排·删除 / 分列 / 自定义编辑器集成
 ```
 
 ### 启动调试宿主（F5）
@@ -129,14 +129,14 @@ npm test          # 53 个测试：front matter 读取 / 看板文件读写 / li
 4. 彻底绕开调试器：`code --extensionDevelopmentPath="D:\vscode-kanban-trial" --new-window` 起一个普通实例，
    配合 `npm run watch` + 在该窗口按 `Ctrl+R` 重载即可迭代。
 
-- [src/core/](src/core) 是不依赖 `vscode` 的纯逻辑（front matter 读取、看板文件读写、list 解析、扫描），单测覆盖
+- [src/core/](src/core) 是不依赖 `vscode` 的纯逻辑（Markdown 扫描与摘要、看板文件读写、list 解析），单测覆盖
 - [src/editor.ts](src/editor.ts) 是看板的自定义编辑器（`CustomTextEditorProvider`）与看板文件写回
 - [media/](media) 是 webview 的前端（原生 JS + CSS，无构建步骤）
 - [test/preview/preview.html](test/preview/preview.html) 是纯浏览器预览页，用假数据渲染看板，方便调 UI
 
 ## 已知取舍
 
-- **只有 `*.kb.yaml` 会被写入**，Markdown 文档永远是只读的；`title` 仍然会从文档 front matter 里读来当卡片标题
+- **只有 `*.kb.yaml` 会被写入**，Markdown 文档永远是只读的；卡片标题取文档里第一个 `#` 标题，没有标题时用文件名
 - 看板是**文本自定义编辑器**（不是纯 Webview），所以编辑器里始终是同一个 `TextDocument`：外部/文本编辑器改动会实时反映到看板，`Ctrl+Z` 撤销也走正常文本撤销栈
 - 移动卡片后如果该文件原本是干净的会自动保存；如果原本有未保存改动则只改缓冲区，不覆盖你的编辑
 - 看板文件语法错误时只提示、不写回，避免猜测破坏内容

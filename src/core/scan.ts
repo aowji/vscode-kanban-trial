@@ -1,6 +1,5 @@
 import { promises as fs } from 'node:fs';
 import * as nodePath from 'node:path';
-import { readFrontmatter } from './frontmatter';
 
 export const DEFAULT_EXCLUDED_DIRS: readonly string[] = [
   'node_modules',
@@ -108,14 +107,14 @@ export async function scanDirectory(
       continue;
     }
 
-    const info = readFrontmatter(text);
+    const { body, error } = stripFrontmatter(text);
     cards.push({
       absPath,
       relPath: toPosixPath(nodePath.relative(directory, absPath)),
-      title: deriveTitle(info.data, info.body, nodePath.basename(absPath)),
-      summary: deriveSummary(info.body),
+      title: deriveTitle(body, nodePath.basename(absPath)),
+      summary: deriveSummary(body),
       updated,
-      error: info.error,
+      error,
     });
   }
 
@@ -130,15 +129,25 @@ async function modifiedTime(absPath: string): Promise<number> {
   }
 }
 
-/** Front matter `title`, then the first level-1 heading, then the file name. */
-export function deriveTitle(
-  data: Record<string, unknown>,
-  body: string,
-  fileName: string,
-): string {
-  const title = data.title;
-  if (typeof title === 'string' && title.trim()) return title.trim();
+const LEADING_FRONTMATTER = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
+const UNCLOSED_FRONTMATTER = /^---[ \t]*\r?\n/;
 
+/**
+ * Removes a leading YAML front matter block. The board shows document text, so
+ * metadata is dropped rather than parsed; an unclosed block is reported instead
+ * of silently swallowing the whole document.
+ */
+export function stripFrontmatter(text: string): { body: string; error?: string } {
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const match = LEADING_FRONTMATTER.exec(body);
+  if (match) return { body: body.slice(match[0].length) };
+  return UNCLOSED_FRONTMATTER.test(body)
+    ? { body, error: 'Front matter starts with "---" but has no closing line.' }
+    : { body };
+}
+
+/** First level-1 heading, then the file name. */
+export function deriveTitle(body: string, fileName: string): string {
   const heading = /^[ \t]*#[ \t]+(.+?)[ \t]*#*[ \t]*$/m.exec(body);
   if (heading && heading[1].trim()) return heading[1].trim();
   return fileName.replace(/\.(markdown|md)$/i, '');
