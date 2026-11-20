@@ -112,7 +112,7 @@ cards:
 npm run compile   # 打包 dist/extension.js
 npm run watch     # 监听编译
 npm run typecheck # tsc 类型检查
-npm test          # 48 个测试：文档扫描与摘要 / 看板文件读写 / list 插入·重排·删除 / 分列 / 自定义编辑器集成
+npm test          # 54 个测试：文档扫描与摘要 / 看板文件读写 / list 增删改名重排 / 分列 / 自定义编辑器集成
 ```
 
 ### 启动调试宿主（F5）
