@@ -2,14 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   buildBoardView,
-  findList,
   parseLists,
-  resolveLists,
   serializeList,
   titleForTag,
   UNASSIGNED_LIST_ID,
+  type BoardList,
   type CardInput,
-  type ParsedList,
 } from '../src/core/board';
 
 function card(overrides: Partial<CardInput> & { title: string }): CardInput {
@@ -23,7 +21,7 @@ function card(overrides: Partial<CardInput> & { title: string }): CardInput {
   };
 }
 
-const lists: ParsedList[] = parseLists(['backlog', 'todo', 'in-progress:In Progress', 'done']);
+const lists: BoardList[] = parseLists(['backlog', 'todo', 'in-progress:In Progress', 'done']);
 
 test('parseLists accepts display titles and lower-cases ids', () => {
   assert.deepEqual(
@@ -52,25 +50,6 @@ test('titleForTag keeps acronyms and prettifies separators', () => {
 test('serializeList only spells out a custom title', () => {
   assert.equal(serializeList({ id: 'in-progress', tag: 'in-progress', title: 'In Progress' }), 'in-progress');
   assert.equal(serializeList({ id: 'wip', tag: 'wip', title: 'Work In Progress' }), 'wip:Work In Progress');
-});
-
-test('resolveLists prefers the board file over the workspace setting', () => {
-  const fallback = parseLists(['backlog', 'done']);
-
-  assert.deepEqual(
-    resolveLists(['design', 'build:Build'], fallback).map((list) => [list.id, list.title]),
-    [
-      ['design', 'Design'],
-      ['build', 'Build'],
-    ],
-  );
-  assert.deepEqual(resolveLists(undefined, fallback).map((list) => list.id), ['backlog', 'done']);
-  assert.deepEqual(resolveLists([], fallback), []);
-});
-
-test('findList returns the list owning the first matching tag', () => {
-  assert.equal(findList(['bug', 'Todo'], lists)?.id, 'todo');
-  assert.equal(findList(['bug'], lists), undefined);
 });
 
 test('buildBoardView groups cards, keeps extra tags and drops the list tag', () => {
@@ -110,13 +89,21 @@ test('buildBoardView keeps the unassigned list visible even when empty', () => {
   assert.equal(view.lists[0].cards.length, 0);
 });
 
+test('buildBoardView always exposes cards without a list tag', () => {
+  const view = buildBoardView([card({ title: 'loose', tags: [] })], { lists: [] });
+  assert.deepEqual(
+    view.lists.map((list) => [list.id, list.cards.length]),
+    [[UNASSIGNED_LIST_ID, 1]],
+  );
+});
+
 test('buildBoardView sorts by title when asked', () => {
   const view = buildBoardView(
     [
       card({ title: 'Zebra', tags: ['todo'], updated: 1 }),
       card({ title: 'apple', tags: ['todo'], updated: 2 }),
     ],
-    { lists, sortBy: 'title', showUnassigned: false },
+    { lists, sortBy: 'title' },
   );
   const todo = view.lists.find((list) => list.id === 'todo')!;
   assert.deepEqual(todo.cards.map((entry) => entry.title), ['apple', 'Zebra']);

@@ -1,9 +1,9 @@
 import { Document, YAMLMap, YAMLSeq, isMap, isSeq, parseDocument } from 'yaml';
-import { parseLists } from './board';
+import { parseLists, type BoardList } from './board';
 
-export const BOARD_FILE_SUFFIXES = ['.kb.yaml', '.kb.yml'] as const;
+const BOARD_FILE_SUFFIXES = ['.kb.yaml', '.kb.yml'] as const;
 export const DEFAULT_BOARD_FILE_NAME = 'kanban.kb.yaml';
-export const BOARD_VERSION = 1;
+const BOARD_VERSION = 1;
 
 export function isBoardFile(filePath: string): boolean {
   const lower = filePath.toLowerCase();
@@ -33,11 +33,11 @@ export function normalizeTags(value: unknown): string[] {
   return tags;
 }
 
-export interface BoardData {
+export interface BoardFile {
   /** Card path -> tags. */
   cardTags: Map<string, string[]>;
   /** Lists owned by this board, `undefined` when the file has no `lists` key. */
-  lists?: string[];
+  lists?: BoardList[];
   error?: string;
 }
 
@@ -45,31 +45,24 @@ export interface BoardData {
  * Reads the board file. Hand-written entries are tolerated in several shapes:
  * `tags: [a]`, `tags: "a, b"`, a bare list, or no value at all.
  */
-export function readBoard(text: string): BoardData {
+export function readBoard(text: string): BoardFile {
   const cardTags = new Map<string, string[]>();
   if (!text.trim()) return { cardTags };
 
-  let doc;
-  try {
-    doc = parseDocument(text, { prettyErrors: false });
-  } catch (error) {
-    return { cardTags, error: `Invalid board file: ${(error as Error).message}` };
-  }
-  if (doc.errors.length > 0) {
-    return { cardTags, error: `Invalid board file: ${doc.errors[0].message.split('\n')[0]}` };
-  }
+  const parsed = parseBoardDoc(text);
+  if ('error' in parsed) return { cardTags, error: parsed.error };
 
-  const data = doc.toJS();
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return { cardTags, error: 'The board file must be a YAML mapping.' };
-  }
+  const data = parsed.doc.toJS();
+  if (!data || typeof data !== 'object') return { cardTags };
 
-  const lists = readLists((data as Record<string, unknown>).lists);
-  const cards = (data as Record<string, unknown>).cards;
+  const record = data as Record<string, unknown>;
+  const entries = readLists(record.lists);
+  const lists = entries === undefined ? undefined : parseLists(entries);
+  const cards = record.cards;
   if (!cards || typeof cards !== 'object' || Array.isArray(cards)) return { cardTags, lists };
 
   for (const [key, value] of Object.entries(cards as Record<string, unknown>)) {
-    cardTags.set(toCardKey(key), entryTags(value));
+    cardTags.set(toCardKey(key), cardTagsFromEntry(value));
   }
   return { cardTags, lists };
 }
@@ -85,7 +78,7 @@ function readLists(value: unknown): string[] | undefined {
   return lists;
 }
 
-function entryTags(value: unknown): string[] {
+function cardTagsFromEntry(value: unknown): string[] {
   if (Array.isArray(value) || typeof value === 'string') return normalizeTags(value);
   if (value && typeof value === 'object') return normalizeTags((value as { tags?: unknown }).tags);
   return [];
@@ -157,16 +150,16 @@ export function moveBoardList(text: string, listId: string, toIndex: number): St
   const targetId = listId.trim().toLowerCase();
   const doc = parseBoardForWrite(text);
   const seq = doc.get('lists', true);
-  if (!isSeq(seq)) return unchanged(text);
+  if (!isSeq(seq)) return noChange(text);
 
   const from = seq.items.findIndex((item) => {
     const entry = nodeToListEntry(item);
     return entry ? parseLists([entry])[0]?.id === targetId : false;
   });
-  if (from === -1) return unchanged(text);
+  if (from === -1) return noChange(text);
 
   const to = clampIndex(toIndex, seq.items.length - 1);
-  if (to === from) return unchanged(text);
+  if (to === from) return noChange(text);
 
   const [node] = seq.items.splice(from, 1);
   seq.items.splice(to, 0, node);
@@ -196,26 +189,38 @@ export function removeBoardList(
       removed = true;
     }
   }
-  if (!removed) return unchanged(text);
+  if (!removed) return noChange(text);
 
   seq.flow = seq.items.length === 0;
   ensureBoardShape(doc);
   return finishUpdate(doc, text);
 }
 
-function unchanged(text: string): StoreUpdate {
+function noChange(text: string): StoreUpdate {
   return { text, start: 0, end: 0, newText: '', changed: false };
 }
 
-function parseBoardForWrite(text: string): Document {
-  const doc = text.trim() ? parseDocument(text) : new Document({});
+/** Parses a board file, reporting problems instead of throwing. */
+function parseBoardDoc(text: string): { doc: Document } | { error: string } {
+  let doc: Document;
+  try {
+    doc = text.trim() ? parseDocument(text, { prettyErrors: false }) : new Document({});
+  } catch (error) {
+    return { error: `Invalid board file: ${(error as Error).message}` };
+  }
   if (doc.errors.length > 0) {
-    throw new Error(`Invalid board file: ${doc.errors[0].message.split('\n')[0]}`);
+    return { error: `Invalid board file: ${doc.errors[0].message.split('\n')[0]}` };
   }
   if (doc.contents !== null && !isMap(doc.contents)) {
-    throw new Error('The board file must be a YAML mapping.');
+    return { error: 'The board file must be a YAML mapping.' };
   }
-  return doc;
+  return { doc };
+}
+
+function parseBoardForWrite(text: string): Document {
+  const parsed = parseBoardDoc(text);
+  if ('error' in parsed) throw new Error(parsed.error);
+  return parsed.doc;
 }
 
 function ensureBoardShape(doc: Document): void {
@@ -241,7 +246,7 @@ function clampIndex(value: number | undefined, max: number): number {
 
 function finishUpdate(doc: Document, before: string): StoreUpdate {
   const text = toFileText(doc.toString({ lineWidth: 0 }));
-  if (text === before) return unchanged(before);
+  if (text === before) return noChange(before);
   return { text, ...minimalEdit(before, text), changed: true };
 }
 

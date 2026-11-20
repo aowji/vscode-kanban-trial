@@ -4,7 +4,12 @@ import Module from 'node:module';
 import * as os from 'node:os';
 import * as nodePath from 'node:path';
 import { after, before, test } from 'node:test';
+import { serializeList, type BoardList } from '../src/core/board';
 import { readBoard } from '../src/core/store';
+
+/** Lists as they would be written back to the file, e.g. `todo` or `wip:WIP`. */
+const listEntries = (text: string): string[] | undefined =>
+  (readBoard(text).lists as BoardList[] | undefined)?.map(serializeList);
 
 /**
  * Drives the real extension code against a minimal `vscode` shim:
@@ -58,7 +63,11 @@ function createDocument(uri: Uri, initial: string): FakeDocument {
     },
     async save() {
       saved = value;
-      await fs.writeFile(uri.fsPath, value, 'utf8');
+      // Write-then-rename: a plain writeFile would let the test's polling reads
+      // observe a half-written file.
+      const temp = `${uri.fsPath}.tmp`;
+      await fs.writeFile(temp, value, 'utf8');
+      await fs.rename(temp, uri.fsPath);
     },
     replaceText(next: string) {
       value = next;
@@ -355,7 +364,6 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     defaultLists: ['backlog', 'todo', 'in-progress:In Progress', 'review', 'done'],
     excludeDirectories: ['node_modules'],
     sortBy: 'updated',
-    showUnassigned: true,
     openMode: 'beside',
     maxFiles: 500,
   });
@@ -386,7 +394,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     const template = await fs.readFile(boardPath, 'utf8');
     assert.match(template, /^# Markdown Kanban board\./);
     // Titles equal to the prettified tag are written in short form.
-    assert.deepEqual(readBoard(template).lists, [
+    assert.deepEqual(listEntries(template), [
       'backlog',
       'todo',
       'in-progress',
@@ -406,7 +414,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       'initial board state',
     );
 
-    assert.equal(firstState.context.boardFileName, 'kanban.kb.yaml');
+    assert.equal(firstState.meta.boardFileName, 'kanban.kb.yaml');
     assert.equal(firstState.view.totalCards, 2);
     assert.deepEqual(
       firstState.view.lists.map((list: any) => list.id),
@@ -432,7 +440,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     // `lists:` key, so the configured lists are used as the seed (fallback).
     fake.send({ type: 'addList', entry: 'qa:QA', index: 0 });
     const withQa = await waitForText(boardPath, (text) => text.includes('qa:QA'), 'the inserted list');
-    assert.deepEqual(readBoard(withQa).lists, [
+    assert.deepEqual(listEntries(withQa), [
       'qa:QA',
       'backlog',
       'todo',
@@ -444,10 +452,10 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     fake.send({ type: 'moveList', listId: 'done', index: 0 });
     const reordered = await waitForText(
       boardPath,
-      (text) => readBoard(text).lists?.[0] === 'done',
+      (text) => listEntries(text)?.[0] === 'done',
       'the reordered lists',
     );
-    assert.deepEqual(readBoard(reordered).lists, [
+    assert.deepEqual(listEntries(reordered), [
       'done',
       'qa:QA',
       'backlog',
@@ -458,7 +466,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
 
     fake.send({ type: 'removeList', listId: 'qa' });
     const withoutQa = await waitForText(boardPath, (text) => !text.includes('qa:QA'), 'list removal');
-    assert.deepEqual(readBoard(withoutQa).lists, [
+    assert.deepEqual(listEntries(withoutQa), [
       'done',
       'backlog',
       'todo',
@@ -470,13 +478,13 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     fake.harness.inputs.push('refine');
     fake.send({ type: 'addList', index: 1 });
     const prompted = await waitForText(boardPath, (text) => text.includes('refine'), 'the prompted list');
-    assert.equal(readBoard(prompted).lists?.[1], 'refine');
+    assert.equal(listEntries(prompted)?.[1], 'refine');
 
     // "Add list before" on the first list inserts at index 0.
     fake.harness.inputs.push('intake');
     fake.send({ type: 'addList', index: 0 });
     const prepended = await waitForText(boardPath, (text) => text.includes('intake'), 'the prepended list');
-    assert.equal(readBoard(prepended).lists?.[0], 'intake');
+    assert.equal(listEntries(prepended)?.[0], 'intake');
 
     // External edits to the board file refresh the webview.
     const statesBefore = fake.harness.messages.filter((m) => m.type === 'state').length;
@@ -485,7 +493,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     const afterExternal = await waitFor(() => {
       const states = fake.harness.messages.filter((m) => m.type === 'state');
       const last = states[states.length - 1]?.state;
-      return states.length > statesBefore && last?.context.storeError === undefined ? last : undefined;
+      return states.length > statesBefore && last?.meta.storeError === undefined ? last : undefined;
     }, 'refresh after an external edit');
     assert.deepEqual(afterExternal.view.lists.map((list: any) => list.id), ['__unassigned', 'design']);
 
@@ -547,6 +555,11 @@ test('the manifest makes *.kb.yaml a default board preview', async () => {
     ['*.kb.yaml', '*.kb.yml'],
   );
   assert.ok(manifest.contributes.configuration.properties['markdownKanban.defaultLists']);
+  assert.equal(
+    manifest.contributes.configuration.properties['markdownKanban.showUnassigned'],
+    undefined,
+    'the hiding-the-unassigned-list setting is gone',
+  );
   assert.equal(
     manifest.contributes.commands.some((command: any) => command.command === 'markdownKanban.refreshBoard'),
     false,

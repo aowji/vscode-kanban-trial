@@ -13,6 +13,11 @@
 - list 支持拖列头重排、列头菜单在任意位置插入/移动/删除，顺序错了不需要删了重加；末尾用 `+ Add list` 追加
 - 代码整理：删除 front matter 偏移扫描、多根扫描、未使用的 webview 状态与冗余刷新命令（配置项 `columns` 更名为 `defaultLists`）
 - 不再解析 Markdown front matter：卡片标题取文档第一个 `#` 标题、否则用文件名，front matter 只被跳过（未闭合时在卡片上提示）
+- 删除 `markdownKanban.showUnassigned` 设置：“No status” 列始终显示，避免关掉后无归属的卡片在看板上凭空消失
+- 代码精简：合并 `editor.ts` 里三处重复的写回+刷新+报错逻辑，统一 `store.ts` 的看板解析与错误构造，删除无引用的 `findList` / `resolveLists`、卡片上未使用的 `data-list` 属性与死样式
+- 命名对齐：`ParsedList` → `BoardList`、`BoardData` → `BoardFile`、`CardView.id/path` → `absPath/relPath`、`BoardState.context` → `meta`
+- `package.json` 删除冗余的 `activationEvents`（VS Code 1.74+ 会按贡献点自动生成）
+- 修复集成测试偶发失败：夹具写文件改为先写临时文件再 rename，避免测试读到半写状态
 - 卡片展示标题、标签 chips、修改时间与正文首段摘要
 - 搜索与多标签过滤、文档与看板文件变更自动刷新
 - 窗口重载后看板自动恢复；输出面板 → Markdown Kanban 提供诊断日志

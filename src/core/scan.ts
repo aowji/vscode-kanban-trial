@@ -150,7 +150,8 @@ export function stripFrontmatter(text: string): { body: string; error?: string }
 export function deriveTitle(body: string, fileName: string): string {
   const heading = /^[ \t]*#[ \t]+(.+?)[ \t]*#*[ \t]*$/m.exec(body);
   if (heading && heading[1].trim()) return heading[1].trim();
-  return fileName.replace(/\.(markdown|md)$/i, '');
+  const extension = nodePath.extname(fileName).toLowerCase();
+  return MARKDOWN_EXTENSIONS.has(extension) ? fileName.slice(0, -extension.length) : fileName;
 }
 
 /** First paragraph of the body, stripped of Markdown noise and truncated. */

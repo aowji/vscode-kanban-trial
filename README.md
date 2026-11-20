@@ -85,7 +85,6 @@ cards:
 | `markdownKanban.defaultLists` | `[]` | 新建看板文件时写入的默认列表；看板文件没有 `lists` 键时的回退值。默认为空（仅保留 `No status`）。支持 `tag:显示名` |
 | `markdownKanban.excludeDirectories` | `node_modules`, `.git`, `dist` … | 不扫描的目录名 |
 | `markdownKanban.sortBy` | `updated` | 列内排序：`updated` 或 `title` |
-| `markdownKanban.showUnassigned` | `true` | 是否显示 “No status” 列 |
 | `markdownKanban.openMode` | `beside` | 点卡片时在侧边打开（看板保留）还是当前标签页。`beside` 固定复用看板右边那一个编辑组 |
 | `markdownKanban.maxFiles` | `3000` | 最多扫描多少个文件 |
 
@@ -110,7 +109,7 @@ cards:
 npm run compile   # 打包 dist/extension.js
 npm run watch     # 监听编译
 npm run typecheck # tsc 类型检查
-npm test          # 49 个测试：文档扫描与摘要 / 看板文件读写 / list 插入·重排·删除 / 分列 / 自定义编辑器集成
+npm test          # 48 个测试：文档扫描与摘要 / 看板文件读写 / list 插入·重排·删除 / 分列 / 自定义编辑器集成
 ```
 
 ### 启动调试宿主（F5）

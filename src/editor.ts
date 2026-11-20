@@ -4,14 +4,13 @@ import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import {
   buildBoardView,
-  resolveLists,
   serializeList,
   UNASSIGNED_LIST_ID,
   UNASSIGNED_LIST_TITLE,
+  type BoardList,
   type BoardView,
   type CardInput,
   type CardView,
-  type ParsedList,
 } from './core/board';
 import { scanDirectory, toPosixPath } from './core/scan';
 import {
@@ -32,7 +31,7 @@ const PLAIN_EDITOR = 'default';
 
 export interface BoardState {
   view: BoardView;
-  context: {
+  meta: {
     /** Absolute path of the board file. */
     boardFile: string;
     boardFileName: string;
@@ -204,7 +203,9 @@ class KanbanEditor {
   private async buildState(): Promise<BoardState> {
     const config = readConfig();
     const board = readBoard(this.document.getText());
-    const lists: ParsedList[] = resolveLists(board.lists, config.lists);
+    // A board file that defines `lists` (even as `[]`) owns its lists; the
+    // setting is only the fallback when the key is missing entirely.
+    const lists: BoardList[] = board.lists ?? config.lists;
     const scanned = await scanDirectory(this.boardDir, {
       excludeDirectories: config.excludeDirectories,
       maxFiles: config.maxFiles,
@@ -223,12 +224,8 @@ class KanbanEditor {
     }
 
     return {
-      view: buildBoardView(cards, {
-        lists,
-        sortBy: config.sortBy,
-        showUnassigned: config.showUnassigned,
-      }),
-      context: {
+      view: buildBoardView(cards, { lists, sortBy: config.sortBy }),
+      meta: {
         boardFile: this.document.uri.fsPath,
         boardFileName: nodePath.basename(this.document.uri.fsPath),
         folderName: nodePath.basename(this.boardDir) || this.boardDir,
@@ -286,7 +283,7 @@ class KanbanEditor {
       case 'copyPath':
         if (message.path) {
           const card = this.findCardView(message.path);
-          await vscode.env.clipboard.writeText(card?.path ?? message.path);
+          await vscode.env.clipboard.writeText(card?.relPath ?? message.path);
         }
         return;
       default:
@@ -297,7 +294,7 @@ class KanbanEditor {
   private findCardView(absPath: string): CardView | undefined {
     return this.lastState?.view.lists
       .flatMap((list) => list.cards)
-      .find((card) => card.id === absPath);
+      .find((card) => card.absPath === absPath);
   }
 
   private async openCard(absPath: string): Promise<void> {
@@ -354,7 +351,7 @@ class KanbanEditor {
     try {
       const before = this.document.getText();
       const board = readBoard(before);
-      const lists = resolveLists(board.lists, config.lists);
+      const lists = board.lists ?? config.lists;
 
       const list = lists.find((entry) => entry.id === listId);
       const toUnassigned = listId === UNASSIGNED_LIST_ID;
@@ -398,43 +395,39 @@ class KanbanEditor {
       if (!entry) return;
     }
 
-    try {
-      const update = addBoardList(this.document.getText(), entry, {
+    await this.runMutation(`addList ${entry}`, () =>
+      addBoardList(this.document.getText(), entry, {
         index,
         fallbackLists: readConfig().lists.map(serializeList),
-      });
-      if (!(await this.applyBoardUpdate(update))) return;
-      await this.refresh();
-    } catch (error) {
-      logError(`addList ${entry}`, error);
-      void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
-    }
+      }),
+    );
   }
 
   private async moveList(listId: string, index: number): Promise<void> {
     if (listId === UNASSIGNED_LIST_ID) return;
-    try {
-      const update = moveBoardList(this.document.getText(), listId, index);
-      if (!(await this.applyBoardUpdate(update))) return;
-      await this.refresh();
-    } catch (error) {
-      logError(`moveList ${listId} -> ${index}`, error);
-      void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
-    }
+    await this.runMutation(`moveList ${listId} -> ${index}`, () =>
+      moveBoardList(this.document.getText(), listId, index),
+    );
   }
 
   private async removeList(listId: string): Promise<void> {
     if (listId === UNASSIGNED_LIST_ID) return;
-    try {
-      const update = removeBoardList(
+    await this.runMutation(`removeList ${listId}`, () =>
+      removeBoardList(
         this.document.getText(),
         listId,
         readConfig().lists.map(serializeList),
-      );
-      if (!(await this.applyBoardUpdate(update))) return;
+      ),
+    );
+  }
+
+  /** Writes one board update and refreshes; failures are logged and reported. */
+  private async runMutation(label: string, build: () => StoreUpdate): Promise<void> {
+    try {
+      if (!(await this.applyBoardUpdate(build()))) return;
       await this.refresh();
     } catch (error) {
-      logError(`removeList ${listId}`, error);
+      logError(label, error);
       void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
     }
   }

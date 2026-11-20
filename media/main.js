@@ -56,7 +56,7 @@
   }
 
   function findCard(cardId) {
-    return allCards().find((card) => card.id === cardId) || null;
+    return allCards().find((card) => card.absPath === cardId) || null;
   }
 
   /** Lists that live in the board file; the "No status" bucket is not one of them. */
@@ -73,7 +73,7 @@
       }
     }
     if (!query) return true;
-    const haystack = [card.title, card.path, card.summary, card.extraTags.join(' ')]
+    const haystack = [card.title, card.relPath, card.summary, card.extraTags.join(' ')]
       .join(' ')
       .toLowerCase();
     return haystack.indexOf(query.toLowerCase()) !== -1;
@@ -135,9 +135,9 @@
     const cards = shown === total
       ? total + ' card' + (total === 1 ? '' : 's')
       : shown + ' of ' + total + ' cards';
-    const files = model.context.fileCount + ' file' + (model.context.fileCount === 1 ? '' : 's');
-    stats.textContent = [cards, files, model.context.boardFileName].join(' \u00b7 ');
-    stats.title = model.context.boardFile;
+    const files = model.meta.fileCount + ' file' + (model.meta.fileCount === 1 ? '' : 's');
+    stats.textContent = [cards, files, model.meta.boardFileName].join(' \u00b7 ');
+    stats.title = model.meta.boardFile;
   }
 
   function renderTagbar() {
@@ -194,16 +194,16 @@
     const notice = document.getElementById('notice');
     if (!notice || !model) return;
     const messages = [];
-    if (model.context.storeError) messages.push(model.context.storeError);
-    if (model.context.truncated) {
+    if (model.meta.storeError) messages.push(model.meta.storeError);
+    if (model.meta.truncated) {
       messages.push(
-        'Only the first ' + model.context.fileCount +
+        'Only the first ' + model.meta.fileCount +
         ' Markdown files were scanned. Raise markdownKanban.maxFiles to see more.',
       );
     }
-    if (model.context.staleEntries > 0) {
+    if (model.meta.staleEntries > 0) {
       messages.push(
-        model.context.staleEntries +
+        model.meta.staleEntries +
         ' saved card(s) point at documents that no longer exist; they are ignored until the document comes back.',
       );
     }
@@ -216,15 +216,15 @@
       .map((tag) => '<button type="button" class="chip" data-tag="' + esc(tag.toLowerCase()) + '">' + esc(tag) + '</button>')
       .join('');
     return [
-      '<article class="card' + (card.error ? ' card-error' : '') + '" draggable="true" data-card="' + esc(card.id) +
-        '" data-list="' + esc(card.listId) + '" tabindex="0">',
+      '<article class="card' + (card.error ? ' card-error' : '') + '" draggable="true" data-card="' + esc(card.absPath) +
+        '" tabindex="0">',
       '<div class="card-title">' + esc(card.title) + '</div>',
       card.summary ? '<p class="card-summary">' + esc(card.summary) + '</p>' : '',
       chips ? '<div class="card-tags">' + chips + '</div>' : '',
       '<div class="card-foot">',
-      '<span class="card-path" title="' + esc(card.path) + '">' + esc(card.path) + '</span>',
+      '<span class="card-path" title="' + esc(card.relPath) + '">' + esc(card.relPath) + '</span>',
       '<span class="card-time">' + esc(relativeTime(card.updated)) + '</span>',
-      '<button type="button" class="card-menu" data-menu="' + esc(card.id) + '" aria-haspopup="menu" aria-label="Card actions" title="Card actions">&#x22ee;</button>',
+      '<button type="button" class="card-menu" data-menu="' + esc(card.absPath) + '" aria-haspopup="menu" aria-label="Card actions" title="Card actions">&#x22ee;</button>',
       '</div>',
       card.error ? '<div class="card-warn">&#x26a0; ' + esc(card.error) + '</div>' : '',
       '</article>',
@@ -346,7 +346,7 @@
     placeholder.innerHTML = [
       '<div class="placeholder-inner">',
       '<h2>No lists configured</h2>',
-      '<p>Every <code>.md</code> file in <strong>' + esc(model.context.folderName) +
+      '<p>Every <code>.md</code> file in <strong>' + esc(model.meta.folderName) +
         '</strong> becomes a card. Add a list with <code>+ Add list</code>, or edit the YAML.</p>',
       '</div>',
     ].join('');
@@ -574,10 +574,10 @@
   }
 
   function optimisticMove(cardId, listId) {
-    const from = model.view.lists.find((list) => list.cards.some((card) => card.id === cardId));
+    const from = model.view.lists.find((list) => list.cards.some((card) => card.absPath === cardId));
     const to = model.view.lists.find((list) => list.id === listId);
     if (!from || !to) return;
-    const index = from.cards.findIndex((card) => card.id === cardId);
+    const index = from.cards.findIndex((card) => card.absPath === cardId);
     if (index === -1) return;
     const card = from.cards.splice(index, 1)[0];
     card.listId = listId;
@@ -586,14 +586,19 @@
     render();
   }
 
+  /** Ids of the board lists without `excludedId`, i.e. the order left after a move. */
+  function listIdsWithout(excludedId) {
+    return boardLists().map((list) => list.id).filter((id) => id !== excludedId);
+  }
+
   /** Final position of `movedId` when it is inserted before `beforeId` (or last). */
   function projectedIndex(movedId, beforeId) {
-    const ids = boardLists().map((list) => list.id).filter((id) => id !== movedId);
+    const ids = listIdsWithout(movedId);
     return beforeId === null ? ids.length : ids.indexOf(beforeId);
   }
 
   function nextListId(listId, movedId) {
-    const ids = boardLists().map((list) => list.id).filter((id) => id !== movedId);
+    const ids = listIdsWithout(movedId);
     const index = ids.indexOf(listId);
     return index === -1 || index === ids.length - 1 ? null : ids[index + 1];
   }
@@ -612,7 +617,7 @@
     if (!card || !model) return;
 
     const items = [];
-    for (const target of model.context.moveTargets) {
+    for (const target of model.meta.moveTargets) {
       if (target.id === card.listId) continue;
       items.push({
         label: 'Move to ' + target.title,

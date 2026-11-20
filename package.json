@@ -21,12 +21,6 @@
     "issues"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onCommand:markdownKanban.openBoard",
-    "onCommand:markdownKanban.openAsText",
-    "onCommand:markdownKanban.createBoardFile",
-    "onCustomEditor:markdownKanban.board"
-  ],
   "contributes": {
     "customEditors": [
       {
@@ -134,11 +128,6 @@
           ],
           "default": "updated",
           "description": "How cards are ordered inside a list."
-        },
-        "markdownKanban.showUnassigned": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show a leading list for documents that carry no list tag."
         },
         "markdownKanban.openMode": {
           "type": "string",

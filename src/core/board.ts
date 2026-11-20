@@ -1,7 +1,7 @@
 import type { ScannedCard } from './scan';
 
 /** One board list (a column), defined by the `lists:` entry in the board file. */
-export interface ParsedList {
+export interface BoardList {
   /** Lower-cased tag; stable identity shared with the webview. */
   id: string;
   /** Tag as written in the board file. */
@@ -15,9 +15,11 @@ export interface CardInput extends ScannedCard {
 }
 
 export interface CardView {
-  id: string;
+  /** Absolute path; identifies the card in the webview. */
+  absPath: string;
   title: string;
-  path: string;
+  /** Path relative to the board file, shown on the card. */
+  relPath: string;
   /** Tags other than the one that decides the list. */
   extraTags: string[];
   /** Tag that put the card in its list, `null` when it has none. */
@@ -57,8 +59,8 @@ export function titleForTag(tag: string): string {
 }
 
 /** Accepts `tag` or `tag:Display Title` entries. */
-export function parseLists(raw: readonly string[] | undefined): ParsedList[] {
-  const lists: ParsedList[] = [];
+export function parseLists(raw: readonly string[] | undefined): BoardList[] {
+  const lists: BoardList[] = [];
   const seen = new Set<string>();
   for (const entry of raw ?? []) {
     if (typeof entry !== 'string') continue;
@@ -77,29 +79,18 @@ export function parseLists(raw: readonly string[] | undefined): ParsedList[] {
 }
 
 /** Inverse of {@link parseLists}: `tag`, or `tag:Display Title` when renamed. */
-export function serializeList(list: ParsedList): string {
+export function serializeList(list: BoardList): string {
   return list.title === titleForTag(list.tag) ? list.tag : `${list.tag}:${list.title}`;
 }
 
-/**
- * The board file owns its own lists; the workspace setting is only the fallback
- * when the board file does not define a `lists` key at all.
- */
-export function resolveLists(
-  fromBoard: readonly string[] | undefined,
-  fallback: readonly ParsedList[],
-): ParsedList[] {
-  return fromBoard !== undefined ? parseLists(fromBoard) : [...fallback];
-}
-
-function indexLists(lists: readonly ParsedList[]): Map<string, ParsedList> {
+function indexLists(lists: readonly BoardList[]): Map<string, BoardList> {
   return new Map(lists.map((list) => [list.id, list]));
 }
 
 function firstListOf(
   tags: readonly string[],
-  index: Map<string, ParsedList>,
-): ParsedList | undefined {
+  index: Map<string, BoardList>,
+): BoardList | undefined {
   for (const tag of tags) {
     const hit = index.get(tag.toLowerCase());
     if (hit) return hit;
@@ -107,25 +98,16 @@ function firstListOf(
   return undefined;
 }
 
-/** The list that owns the first matching tag, or `undefined` when there is none. */
-export function findList(
-  tags: readonly string[],
-  lists: readonly ParsedList[],
-): ParsedList | undefined {
-  return firstListOf(tags, indexLists(lists));
-}
-
 export interface BuildBoardOptions {
-  lists: readonly ParsedList[];
+  lists: readonly BoardList[];
   sortBy?: 'updated' | 'title';
-  showUnassigned?: boolean;
 }
 
 export function buildBoardView(
   cards: readonly CardInput[],
   options: BuildBoardOptions,
 ): BoardView {
-  const { lists, sortBy = 'updated', showUnassigned = true } = options;
+  const { lists, sortBy = 'updated' } = options;
   const index = indexLists(lists);
   const buckets = new Map<string, CardView[]>(lists.map((list) => [list.id, []]));
   const unassigned: CardView[] = [];
@@ -133,9 +115,9 @@ export function buildBoardView(
   for (const card of cards) {
     const list = firstListOf(card.tags, index);
     const view: CardView = {
-      id: card.absPath,
+      absPath: card.absPath,
       title: card.title,
-      path: card.relPath,
+      relPath: card.relPath,
       extraTags: card.tags.filter((tag) => tag.toLowerCase() !== list?.tag.toLowerCase()),
       listTag: list?.tag ?? null,
       listId: list?.id ?? UNASSIGNED_LIST_ID,
@@ -146,15 +128,14 @@ export function buildBoardView(
     (list ? buckets.get(list.id)! : unassigned).push(view);
   }
 
-  const views: ListView[] = [];
-  if (showUnassigned) {
-    views.push({
+  const views: ListView[] = [
+    {
       id: UNASSIGNED_LIST_ID,
       title: UNASSIGNED_LIST_TITLE,
       tag: null,
       cards: sortCards(unassigned, sortBy),
-    });
-  }
+    },
+  ];
   for (const list of lists) {
     views.push({
       id: list.id,

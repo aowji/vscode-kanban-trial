@@ -53,11 +53,11 @@
       const now = Date.now();
       const minutes = (n) => now - n * 60000;
 
-      function card(id, title, summary, extraTags, listTag, listId, updated, error) {
+      function card(absPath, title, summary, extraTags, listTag, listId, updated, error) {
         return {
-          id,
+          absPath,
           title,
-          path: id.replace(/^.*?\/workspace\//, ''),
+          relPath: absPath.replace(/^.*?\/workspace\//, ''),
           extraTags,
           listTag,
           listId,
@@ -154,7 +154,7 @@
                 card(
                   '/workspace/docs/drag-and-drop.md',
                   'Drag and drop between columns',
-                  'Dragging a card rewrites only the front matter block so cursor position and body text survive.',
+                  'Dragging a card rewrites only its entry in the board file, so the document is never touched.',
                   ['board', 'frontmatter'],
                   'in-progress',
                   'in-progress',
@@ -184,7 +184,7 @@
                   'review',
                   'review',
                   minutes(45),
-                  'Invalid front matter: unexpected end of the stream within a flow collection',
+                  'Front matter starts with "---" but has no closing line.',
                 ),
               ],
             },
@@ -204,7 +204,7 @@
                 ),
                 card(
                   '/workspace/docs/frontmatter-parse.md',
-                  'Parse YAML front matter',
+                  'Skip YAML front matter',
                   'Round-trips comments and unknown keys through the yaml document API.',
                   ['frontmatter'],
                   'done',
@@ -215,7 +215,7 @@
             },
           ],
         },
-        context: {
+        meta: {
           boardFile: 'D:\\vscode-kanban-trial\\kanban.kb.yaml',
           boardFileName: 'kanban.kb.yaml',
           folderName: 'vscode-kanban-trial',
