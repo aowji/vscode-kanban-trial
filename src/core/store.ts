@@ -1,5 +1,13 @@
-import { Document, YAMLMap, YAMLSeq, isMap, isSeq, parseDocument } from 'yaml';
-import { parseLists, serializeList, type BoardList } from './board';
+import {
+  Document,
+  YAMLMap,
+  YAMLSeq,
+  isMap,
+  isScalar,
+  isSeq,
+  parseDocument,
+} from 'yaml';
+import { parseLists, type BoardList } from './board';
 
 const BOARD_FILE_SUFFIXES = ['.kb.yaml', '.kb.yml'] as const;
 export const DEFAULT_BOARD_FILE_NAME = 'kanban.kb.yaml';
@@ -56,8 +64,7 @@ export function readBoard(text: string): BoardFile {
   if (!data || typeof data !== 'object') return { cardTags };
 
   const record = data as Record<string, unknown>;
-  const entries = readLists(record.lists);
-  const lists = entries === undefined ? undefined : parseLists(entries);
+  const lists = readLists(record.lists);
   const cards = record.cards;
   if (!cards || typeof cards !== 'object' || Array.isArray(cards)) return { cardTags, lists };
 
@@ -67,15 +74,15 @@ export function readBoard(text: string): BoardFile {
   return { cardTags, lists };
 }
 
-/** `lists: [todo, "in-progress:In Progress"]` or `- {tag: todo, title: Todo}`. */
-function readLists(value: unknown): string[] | undefined {
+/** `lists: [todo, review]`; `- {tag: todo}` objects are tolerated too. */
+function readLists(value: unknown): BoardList[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const lists: string[] = [];
+  const tags: string[] = [];
   for (const entry of value) {
-    const text = valueToListEntry(entry);
-    if (text) lists.push(text);
+    const tag = listTagFromValue(entry);
+    if (tag) tags.push(tag);
   }
-  return lists;
+  return parseLists(tags);
 }
 
 function cardTagsFromEntry(value: unknown): string[] {
@@ -126,17 +133,14 @@ export function addBoardList(
   entry: string,
   options: AddListOptions = {},
 ): StoreUpdate {
-  const parsed = parseLists([entry])[0];
-  if (!parsed) throw new Error('List name cannot be empty.');
+  const tag = entry.trim();
+  if (!tag) throw new Error('List name cannot be empty.');
 
   const doc = parseBoardForWrite(text);
   const seq = ensureListsSeq(doc, options.fallbackLists ?? []);
-  const existing = seq.items.map(nodeToListEntry).filter((entry): entry is string => !!entry);
-  if (parseLists(existing).some((list) => list.id === parsed.id)) {
-    throw new Error(`List "${parsed.tag}" already exists.`);
-  }
+  if (hasListTag(seq, tag)) throw new Error(`List "${tag}" already exists.`);
 
-  seq.items.splice(clampIndex(options.index, seq.items.length), 0, doc.createNode(entry.trim()));
+  seq.items.splice(clampIndex(options.index, seq.items.length), 0, doc.createNode(tag));
   seq.flow = false;
   ensureBoardShape(doc);
   return finishUpdate(doc, text);
@@ -152,10 +156,7 @@ export function moveBoardList(text: string, listId: string, toIndex: number): St
   const seq = doc.get('lists', true);
   if (!isSeq(seq)) return noChange(text);
 
-  const from = seq.items.findIndex((item) => {
-    const entry = nodeToListEntry(item);
-    return entry ? parseLists([entry])[0]?.id === targetId : false;
-  });
+  const from = seq.items.findIndex((item) => listTagFromNode(item)?.toLowerCase() === targetId);
   if (from === -1) return noChange(text);
 
   const to = clampIndex(toIndex, seq.items.length - 1);
@@ -168,31 +169,31 @@ export function moveBoardList(text: string, listId: string, toIndex: number): St
 }
 
 /**
- * Renames a list's display title. The tag, the cards and the list order are
- * untouched: only the `tag:Display Title` label in `lists:` changes.
+ * Renames a list by renaming its tag everywhere: the `lists:` entry and every
+ * card that carried the old tag. A list is just a tag, so nothing else is
+ * stored per column.
  */
-export function renameBoardList(
+export function renameListTag(
   text: string,
   listId: string,
-  title: string,
+  newTag: string,
   fallbackLists: readonly string[] = [],
 ): StoreUpdate {
   const targetId = listId.trim().toLowerCase();
-  const nextTitle = title.trim();
-  if (!nextTitle) throw new Error('List title cannot be empty.');
+  const tag = newTag.trim();
+  if (!tag) throw new Error('List name cannot be empty.');
 
   const doc = parseBoardForWrite(text);
   const seq = ensureListsSeq(doc, fallbackLists);
 
-  for (let i = 0; i < seq.items.length; i += 1) {
-    const entry = nodeToListEntry(seq.items[i]);
-    const list = entry ? parseLists([entry])[0] : undefined;
-    if (list?.id !== targetId || list.title === nextTitle) continue;
-    seq.items[i] = doc.createNode(serializeList({ ...list, title: nextTitle }));
-    ensureBoardShape(doc);
-    return finishUpdate(doc, text);
-  }
-  return noChange(text);
+  const at = seq.items.findIndex((item) => listTagFromNode(item)?.toLowerCase() === targetId);
+  if (at === -1) return noChange(text);
+  if (hasListTag(seq, tag, at)) throw new Error(`List "${tag}" already exists.`);
+
+  seq.items[at] = doc.createNode(tag);
+  renameTagOnCards(doc, targetId, tag);
+  ensureBoardShape(doc);
+  return finishUpdate(doc, text);
 }
 
 /**
@@ -211,17 +212,58 @@ export function removeBoardList(
 
   let removed = false;
   for (let i = seq.items.length - 1; i >= 0; i -= 1) {
-    const entry = nodeToListEntry(seq.items[i]);
-    if (entry && parseLists([entry])[0]?.id === targetId) {
-      seq.items.splice(i, 1);
-      removed = true;
-    }
+    if (listTagFromNode(seq.items[i])?.toLowerCase() !== targetId) continue;
+    seq.items.splice(i, 1);
+    removed = true;
   }
   if (!removed) return noChange(text);
 
   seq.flow = seq.items.length === 0;
   ensureBoardShape(doc);
   return finishUpdate(doc, text);
+}
+
+function hasListTag(seq: YAMLSeq, tag: string, exceptIndex = -1): boolean {
+  const id = tag.toLowerCase();
+  return seq.items.some(
+    (item, index) => index !== exceptIndex && listTagFromNode(item)?.toLowerCase() === id,
+  );
+}
+
+/** Rewrites the tag in every card entry, so cards follow the renamed list. */
+function renameTagOnCards(doc: Document, targetId: string, tag: string): void {
+  const cards = doc.get('cards', true);
+  if (!isMap(cards)) return;
+  for (const pair of cards.items) {
+    renameTagNode(doc, pair.value, targetId, tag);
+  }
+}
+
+function renameTagNode(doc: Document, node: unknown, targetId: string, tag: string): void {
+  if (isSeq(node)) {
+    node.items = node.items.map((item) =>
+      isScalar(item) && typeof item.value === 'string' && item.value.trim().toLowerCase() === targetId
+        ? doc.createNode(tag)
+        : item,
+    );
+    return;
+  }
+  // `tags: [a, b]` lives one level down.
+  if (isMap(node)) {
+    renameTagNode(doc, node.get('tags', true), targetId, tag);
+    return;
+  }
+  if (!isScalar(node) || typeof node.value !== 'string') return;
+
+  // A bare `a.md: todo` or a comma list, both tolerated on read.
+  const parts = node.value.split(',');
+  const renamed = parts.map((part) => {
+    if (part.trim().toLowerCase() !== targetId) return part;
+    const lead = /^\s*/.exec(part)?.[0] ?? '';
+    const trail = /\s*$/.exec(part)?.[0] ?? '';
+    return lead + tag + trail;
+  });
+  if (renamed.some((part, index) => part !== parts[index])) node.value = renamed.join(',');
 }
 
 function noChange(text: string): StoreUpdate {
@@ -278,26 +320,26 @@ function finishUpdate(doc: Document, before: string): StoreUpdate {
   return { text, ...minimalEdit(before, text), changed: true };
 }
 
-/** YAML node for a list entry; `{tag, title}` objects are accepted too. */
-function nodeToListEntry(node: unknown): string | undefined {
+/** Tag of a list entry node; `{tag: x}` / `{name: x}` objects are tolerated too. */
+function listTagFromNode(node: unknown): string | undefined {
   if (!node || typeof node !== 'object') return undefined;
   const typed = node as { toJSON?: () => unknown; value?: unknown };
   const value = typeof typed.toJSON === 'function' ? typed.toJSON() : typed.value;
-  return valueToListEntry(value);
+  return listTagFromValue(value);
 }
 
-/** Plain value for a list entry; shared by file reads and YAML node reads. */
-function valueToListEntry(value: unknown): string | undefined {
+/** Plain value of a list entry; shared by file reads and YAML node reads. */
+function listTagFromValue(value: unknown): string | undefined {
   if (typeof value === 'string' || typeof value === 'number') {
     return String(value).trim() || undefined;
   }
   if (!value || typeof value !== 'object') return undefined;
 
-  const { tag, name, title } = value as { tag?: unknown; name?: unknown; title?: unknown };
-  const tagText = typeof tag === 'string' ? tag.trim() : typeof name === 'string' ? name.trim() : '';
-  if (!tagText) return undefined;
-  const titleText = typeof title === 'string' ? title.trim() : '';
-  return titleText ? `${tagText}:${titleText}` : tagText;
+  const { tag, name } = value as { tag?: unknown; name?: unknown };
+  for (const candidate of [tag, name]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return undefined;
 }
 
 function toFileText(value: string): string {
@@ -334,7 +376,7 @@ export function boardFileTemplate(lists: readonly string[] = []): string {
     '# Markdown Kanban board.',
     '# Every document in this folder becomes a card; card status is stored here,',
     '# never in the documents themselves.',
-    '# Add lists here (or from the board UI). Use "tag:Display Title" to rename a column.',
+    '# Add lists here (or from the board UI); a list is the tag its cards carry.',
     `version: ${BOARD_VERSION}`,
   ];
   if (lists.length > 0) {
@@ -347,7 +389,7 @@ export function boardFileTemplate(lists: readonly string[] = []): string {
   return lines.join('\n');
 }
 
-/** Quotes only when needed, e.g. `in-progress:In Progress` would read as a mapping. */
+/** Quotes only when needed, e.g. a tag with a colon or a leading `#`. */
 function quoteYamlScalar(value: string): string {
   return /[:#]/.test(value) || /^\s|\s$/.test(value) ? JSON.stringify(value) : value;
 }

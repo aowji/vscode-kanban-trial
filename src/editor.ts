@@ -4,7 +4,6 @@ import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import {
   buildBoardView,
-  serializeList,
   UNASSIGNED_LIST_ID,
   UNASSIGNED_LIST_TITLE,
   type BoardList,
@@ -18,7 +17,7 @@ import {
   moveBoardList,
   readBoard,
   removeBoardList,
-  renameBoardList,
+  renameListTag,
   setCardTags,
   toCardKey,
   type StoreUpdate,
@@ -236,7 +235,7 @@ class KanbanEditor {
         staleEntries,
         moveTargets: [
           { id: UNASSIGNED_LIST_ID, title: UNASSIGNED_LIST_TITLE },
-          ...lists.map((list) => ({ id: list.id, title: list.title })),
+          ...lists.map((list) => ({ id: list.id, title: list.tag })),
         ],
       },
     };
@@ -390,10 +389,10 @@ class KanbanEditor {
       entry = (
         await vscode.window.showInputBox({
           title: 'Add list',
-          prompt: 'Tag name for the new list (optional "tag:Display Title")',
-          placeHolder: 'todo or in-progress:In Progress',
+          prompt: 'Name of the new list; it becomes the tag its cards carry',
+          placeHolder: 'todo',
           ignoreFocusOut: true,
-          validateInput: (value) => (value.trim() ? undefined : 'A list tag is required'),
+          validateInput: (value) => (value.trim() ? undefined : 'A list name is required'),
         })
       )?.trim();
       if (!entry) return;
@@ -402,7 +401,7 @@ class KanbanEditor {
     await this.runMutation(`addList ${entry}`, () =>
       addBoardList(this.document.getText(), entry, {
         index,
-        fallbackLists: readConfig().lists.map(serializeList),
+        fallbackLists: configTags(),
       }),
     );
   }
@@ -417,11 +416,7 @@ class KanbanEditor {
   private async removeList(listId: string): Promise<void> {
     if (listId === UNASSIGNED_LIST_ID) return;
     await this.runMutation(`removeList ${listId}`, () =>
-      removeBoardList(
-        this.document.getText(),
-        listId,
-        readConfig().lists.map(serializeList),
-      ),
+      removeBoardList(this.document.getText(), listId, configTags()),
     );
   }
 
@@ -434,21 +429,17 @@ class KanbanEditor {
 
     const value = await vscode.window.showInputBox({
       title: 'Rename list',
-      prompt: `Display title for "${list.tag}" (the tag and its cards stay as they are)`,
-      value: list.title,
+      prompt: `New name for "${list.tag}"; the tag on its cards is renamed too`,
+      value: list.tag,
       ignoreFocusOut: true,
-      validateInput: (input) => (input.trim() ? undefined : 'A list title is required'),
+      validateInput: (input) =>
+        input.trim() ? undefined : 'A list name is required',
     });
-    const title = value?.trim();
-    if (!title || title === list.title) return;
+    const tag = value?.trim();
+    if (!tag || tag === list.tag) return;
 
-    await this.runMutation(`renameList ${listId} -> ${title}`, () =>
-      renameBoardList(
-        this.document.getText(),
-        listId,
-        title,
-        config.lists.map(serializeList),
-      ),
+    await this.runMutation(`renameList ${listId} -> ${tag}`, () =>
+      renameListTag(this.document.getText(), listId, tag, configTags()),
     );
   }
 
@@ -494,6 +485,11 @@ class KanbanEditor {
 function normalizePath(value: string): string {
   const normalized = value.replace(/\\/g, '/');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/** Configured lists as plain tags, used to seed a board file without `lists:`. */
+function configTags(): string[] {
+  return readConfig().lists.map((list) => list.tag);
 }
 
 /** Unsaved editor buffers win over the copy on disk, so moves never lose edits. */

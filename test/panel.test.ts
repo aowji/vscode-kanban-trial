@@ -4,12 +4,11 @@ import Module from 'node:module';
 import * as os from 'node:os';
 import * as nodePath from 'node:path';
 import { after, before, test } from 'node:test';
-import { serializeList, type BoardList } from '../src/core/board';
 import { readBoard } from '../src/core/store';
 
-/** Lists as they would be written back to the file, e.g. `todo` or `wip:WIP`. */
+/** Tags of the `lists:` entries, i.e. the column names. */
 const listEntries = (text: string): string[] | undefined =>
-  (readBoard(text).lists as BoardList[] | undefined)?.map(serializeList);
+  readBoard(text).lists?.map((list) => list.tag);
 
 /**
  * Drives the real extension code against a minimal `vscode` shim:
@@ -361,7 +360,7 @@ after(async () => {
 
 test('*.kb.yaml opens as a custom editor that reads and writes the board file', async () => {
   const fake = createFakeVscode(root, {
-    defaultLists: ['backlog', 'todo', 'in-progress:In Progress', 'review', 'done'],
+    defaultLists: ['backlog', 'todo', 'in-progress', 'review', 'done'],
     excludeDirectories: ['node_modules'],
     sortBy: 'updated',
     openMode: 'beside',
@@ -393,7 +392,6 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     await fake.registered.get('markdownKanban.createBoardFile')!();
     const template = await fs.readFile(boardPath, 'utf8');
     assert.match(template, /^# Markdown Kanban board\./);
-    // Titles equal to the prettified tag are written in short form.
     assert.deepEqual(listEntries(template), [
       'backlog',
       'todo',
@@ -438,10 +436,10 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
 
     // Lists: insert at an index, reorder, then remove. The board file has no
     // `lists:` key, so the configured lists are used as the seed (fallback).
-    fake.send({ type: 'addList', entry: 'qa:QA', index: 0 });
-    const withQa = await waitForText(boardPath, (text) => text.includes('qa:QA'), 'the inserted list');
+    fake.send({ type: 'addList', entry: 'qa', index: 0 });
+    const withQa = await waitForText(boardPath, (text) => text.includes('qa'), 'the inserted list');
     assert.deepEqual(listEntries(withQa), [
-      'qa:QA',
+      'qa',
       'backlog',
       'todo',
       'in-progress',
@@ -457,7 +455,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     );
     assert.deepEqual(listEntries(reordered), [
       'done',
-      'qa:QA',
+      'qa',
       'backlog',
       'todo',
       'in-progress',
@@ -465,7 +463,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     ]);
 
     fake.send({ type: 'removeList', listId: 'qa' });
-    const withoutQa = await waitForText(boardPath, (text) => !text.includes('qa:QA'), 'list removal');
+    const withoutQa = await waitForText(boardPath, (text) => !text.includes('qa'), 'list removal');
     assert.deepEqual(listEntries(withoutQa), [
       'done',
       'backlog',
@@ -486,16 +484,16 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     const prepended = await waitForText(boardPath, (text) => text.includes('intake'), 'the prepended list');
     assert.equal(listEntries(prepended)?.[0], 'intake');
 
-    // Renaming a list only rewrites its label; the tag and cards stay.
-    fake.harness.inputs.push('Intake & Triage');
-    fake.send({ type: 'renameList', listId: 'intake' });
+    // Renaming a list renames its tag, on the list and on the cards that carry it.
+    fake.harness.inputs.push('reviewed');
+    fake.send({ type: 'renameList', listId: 'review' });
     const renamed = await waitForText(
       boardPath,
-      (text) => text.includes('Intake & Triage'),
+      (text) => text.includes('reviewed'),
       'the renamed list',
     );
-    assert.equal(listEntries(renamed)?.[0], 'intake:Intake & Triage');
-    assert.deepEqual(readBoard(renamed).cardTags.get('fix-login.md'), ['bug', 'review']);
+    assert.equal(listEntries(renamed)?.at(-1), 'reviewed');
+    assert.deepEqual(readBoard(renamed).cardTags.get('fix-login.md'), ['bug', 'reviewed']);
 
     // External edits to the board file refresh the webview.
     const statesBefore = fake.harness.messages.filter((m) => m.type === 'state').length;

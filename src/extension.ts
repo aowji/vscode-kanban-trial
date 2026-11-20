@@ -1,6 +1,5 @@
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { serializeList } from './core/board';
 import { DEFAULT_BOARD_FILE_NAME, boardFileTemplate, isBoardFile } from './core/store';
 import { KanbanEditorProvider, VIEW_TYPE } from './editor';
 import { readConfig } from './config';
@@ -97,7 +96,7 @@ async function createBoardFile(): Promise<void> {
   try {
     await vscode.workspace.fs.stat(uri);
   } catch {
-    const lists = readConfig().lists.map(serializeList);
+    const lists = readConfig().lists.map((list) => list.tag);
     await vscode.workspace.fs.writeFile(uri, Buffer.from(boardFileTemplate(lists), 'utf8'));
     log(`created ${uri.fsPath}`);
   }

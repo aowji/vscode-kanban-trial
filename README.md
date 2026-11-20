@@ -58,7 +58,7 @@ version: 1
 lists:
   - backlog
   - todo
-  - "in-progress:In Progress"
+  - in-progress
   - done
 cards:
   docs/fix-login.md:
@@ -70,8 +70,9 @@ cards:
       - done
 ```
 
-- `lists:` 定义这个看板自己的列与列序；支持 `tag:显示名` 改名。不写（缺 `lists` 键）时退回设置里的 `markdownKanban.defaultLists`；显式写 `lists: []` 则是"只有 No status"
-- 改列名（列头 `⋮` → *Rename list*）只改这里显示的标题，tag 与卡片归属都不变；改回与 tag 对应的默认标题时会自动收回简写形式（`in-progress:In Progress` → `in-progress`）
+- `lists:` 定义这个看板自己的列与列序，**每一条就是一个 tag，列名原样显示**（不做大小写/连字符转换）。不写（缺 `lists` 键）时退回设置里的 `markdownKanban.defaultLists`；显式写 `lists: []` 则是"只有 No status"
+- 改列名（列头 `⋮` → *Rename list*）= **改 tag 本身**：`lists:` 里那条，以及所有卡片上携带的同名 tag 一起改（大小写不敏感匹配），所以卡片会跟着新名字继续留在这一列
+- 列名大小写不敏感：`Todo` 与 `todo` 视为同一列，`lists:` 里重复的只保留第一个写法
 - key 是相对看板文件所在目录的 POSIX 路径；拖动卡片只会重写对应的这一条（注释、其它条目、`lists` 原样保留）
 - 列 tag 取 `lists` 里的那几个；一张卡片只会落在一列
 - 其余 tag 会作为 chip 显示在卡片上，不参与分列
@@ -84,7 +85,7 @@ cards:
 
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `markdownKanban.defaultLists` | `[]` | 新建看板文件时写入的默认列表；看板文件没有 `lists` 键时的回退值。默认为空（仅保留 `No status`）。支持 `tag:显示名` |
+| `markdownKanban.defaultLists` | `[]` | 新建看板文件时写入的默认列表；看板文件没有 `lists` 键时的回退值。默认为空（仅保留 `No status`）。每一项就是列名，也就是卡片要携带的 tag |
 | `markdownKanban.excludeDirectories` | `node_modules`, `.git`, `dist` … | 不扫描的目录名 |
 | `markdownKanban.sortBy` | `updated` | 列内排序：`updated` 或 `title` |
 | `markdownKanban.openMode` | `beside` | 点卡片时在侧边打开（看板保留）还是当前标签页。`beside` 固定复用看板右边那一个编辑组 |
@@ -100,9 +101,9 @@ cards:
 | 卡片聚焦后按 `m` | 打开操作菜单 |
 | 点 tag chip | 过滤该标签（可多选） |
 | 点看板右上角 `✎` | 切换成文本编辑器编辑这个 YAML |
-| 最右端 `+ Add list` | 在末尾追加一列（表单内输入 `tag` 或 `tag:显示名`） |
+| 最右端 `+ Add list` | 在末尾追加一列（表单内输入列名，它同时是卡片要携带的 tag） |
 | 拖拽列头 | 左右拖动即可重排列顺序（`No status` 不可拖），拖到最右槽 = 移到末尾 |
-| 列头 `⋮` 菜单 | `Move left` / `Move right` / `Add list before` / `Add list after` / `Remove list`，键盘可达 |
+| 列头 `⋮` 菜单 | `Move left` / `Move right` / `Add list before` / `Add list after` / `Rename list` / `Collapse list` / `Remove list`，键盘可达 |
 | 列头 `×` | 删除该 list（卡片 tag 保留，回到 `No status`） |
 
 ## 开发

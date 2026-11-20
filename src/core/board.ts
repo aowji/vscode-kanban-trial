@@ -1,12 +1,11 @@
 import type { ScannedCard } from './scan';
 
-/** One board list (a column), defined by the `lists:` entry in the board file. */
+/** One board list (a column): a tag from the board file's `lists:` entry. */
 export interface BoardList {
   /** Lower-cased tag; stable identity shared with the webview. */
   id: string;
-  /** Tag as written in the board file. */
+  /** Tag as written in the board file; this is also the column name. */
   tag: string;
-  title: string;
 }
 
 /** A scanned document plus the tags stored for it in the board file. */
@@ -32,6 +31,7 @@ export interface CardView {
 
 export interface ListView {
   id: string;
+  /** What the column header shows: the tag, or "No status" for the bucket. */
   title: string;
   /** `null` for the "No status" bucket, which owns no tag. */
   tag: string | null;
@@ -46,41 +46,20 @@ export interface BoardView {
 export const UNASSIGNED_LIST_ID = '__unassigned';
 export const UNASSIGNED_LIST_TITLE = 'No status';
 
-/** `in-progress` -> `In Progress`, `TODO` -> `TODO`. */
-export function titleForTag(tag: string): string {
-  if (/[A-Z]/.test(tag) && tag === tag.toUpperCase()) return tag;
-  return tag
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ')
-    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
-    .join(' ');
-}
-
-/** Accepts `tag` or `tag:Display Title` entries. */
+/** Trims entries, drops blanks, keeps the first spelling of a duplicated tag. */
 export function parseLists(raw: readonly string[] | undefined): BoardList[] {
   const lists: BoardList[] = [];
   const seen = new Set<string>();
   for (const entry of raw ?? []) {
     if (typeof entry !== 'string') continue;
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    const separator = trimmed.indexOf(':');
-    const tag = (separator === -1 ? trimmed : trimmed.slice(0, separator)).trim();
+    const tag = entry.trim();
     if (!tag) continue;
     const id = tag.toLowerCase();
     if (seen.has(id)) continue;
     seen.add(id);
-    const customTitle = separator === -1 ? '' : trimmed.slice(separator + 1).trim();
-    lists.push({ id, tag, title: customTitle || titleForTag(tag) });
+    lists.push({ id, tag });
   }
   return lists;
-}
-
-/** Inverse of {@link parseLists}: `tag`, or `tag:Display Title` when renamed. */
-export function serializeList(list: BoardList): string {
-  return list.title === titleForTag(list.tag) ? list.tag : `${list.tag}:${list.title}`;
 }
 
 function indexLists(lists: readonly BoardList[]): Map<string, BoardList> {
@@ -139,7 +118,7 @@ export function buildBoardView(
   for (const list of lists) {
     views.push({
       id: list.id,
-      title: list.title,
+      title: list.tag,
       tag: list.tag,
       cards: sortCards(buckets.get(list.id) ?? [], sortBy),
     });

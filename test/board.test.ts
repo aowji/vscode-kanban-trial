@@ -3,8 +3,6 @@ import { test } from 'node:test';
 import {
   buildBoardView,
   parseLists,
-  serializeList,
-  titleForTag,
   UNASSIGNED_LIST_ID,
   type BoardList,
   type CardInput,
@@ -21,16 +19,15 @@ function card(overrides: Partial<CardInput> & { title: string }): CardInput {
   };
 }
 
-const lists: BoardList[] = parseLists(['backlog', 'todo', 'in-progress:In Progress', 'done']);
+const lists: BoardList[] = parseLists(['backlog', 'todo', 'in-progress', 'done']);
 
-test('parseLists accepts display titles and lower-cases ids', () => {
+test('parseLists keeps tags verbatim and lower-cases only the id', () => {
   assert.deepEqual(
-    lists.map((list) => [list.id, list.tag, list.title]),
+    parseLists(['Backlog', 'TODO', 'in-progress']).map((list) => [list.id, list.tag]),
     [
-      ['backlog', 'backlog', 'Backlog'],
-      ['todo', 'todo', 'Todo'],
-      ['in-progress', 'in-progress', 'In Progress'],
-      ['done', 'done', 'Done'],
+      ['backlog', 'Backlog'],
+      ['todo', 'TODO'],
+      ['in-progress', 'in-progress'],
     ],
   );
 });
@@ -41,15 +38,16 @@ test('parseLists drops duplicates and returns empty when empty', () => {
   assert.deepEqual(parseLists(undefined), []);
 });
 
-test('titleForTag keeps acronyms and prettifies separators', () => {
-  assert.equal(titleForTag('in-progress'), 'In Progress');
-  assert.equal(titleForTag('needs_review'), 'Needs Review');
-  assert.equal(titleForTag('TODO'), 'TODO');
-});
-
-test('serializeList only spells out a custom title', () => {
-  assert.equal(serializeList({ id: 'in-progress', tag: 'in-progress', title: 'In Progress' }), 'in-progress');
-  assert.equal(serializeList({ id: 'wip', tag: 'wip', title: 'Work In Progress' }), 'wip:Work In Progress');
+test('buildBoardView names each column after its tag', () => {
+  const view = buildBoardView([], { lists: parseLists(['Backlog', 'TODO']) });
+  assert.deepEqual(
+    view.lists.map((list) => [list.id, list.title, list.tag]),
+    [
+      [UNASSIGNED_LIST_ID, 'No status', null],
+      ['backlog', 'Backlog', 'Backlog'],
+      ['todo', 'TODO', 'TODO'],
+    ],
+  );
 });
 
 test('buildBoardView groups cards, keeps extra tags and drops the list tag', () => {

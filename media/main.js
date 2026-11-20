@@ -274,7 +274,7 @@
   function addListFormHtml() {
     return [
       '<form class="list-add-form" data-add-form>',
-      '<input type="text" class="add-list-input" placeholder="tag or tag:Title" aria-label="New list tag" autocomplete="off" spellcheck="false" value="' + esc(addListDraft) + '" />',
+      '<input type="text" class="add-list-input" placeholder="list name" aria-label="New list name" autocomplete="off" spellcheck="false" value="' + esc(addListDraft) + '" />',
       '<div class="list-add-actions">',
       '<button type="submit" class="primary-button">Add</button>',
       '<button type="button" class="icon-button" data-cancel-add title="Cancel" aria-label="Cancel">&times;</button>',

@@ -92,7 +92,7 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Lists written into a new board file, and used as the fallback when a board file has no `lists` key. Empty by default, so a new board only shows the No status list. Use `tag:Display Title` to rename a list header (e.g. `in-progress:In Progress`)."
+          "markdownDescription": "Lists written into a new board file, and used as the fallback when a board file has no `lists` key. Empty by default, so a new board only shows the No status list. A list is just the tag its cards carry, shown verbatim (e.g. `in-progress`)."
         },
         "markdownKanban.excludeDirectories": {
           "type": "array",

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { serializeList, type BoardList } from '../src/core/board';
 import {
   addBoardList,
   boardFileTemplate,
@@ -10,16 +9,14 @@ import {
   normalizeTags,
   readBoard,
   removeBoardList,
-  renameBoardList,
+  renameListTag,
   setCardTags,
   toCardKey,
 } from '../src/core/store';
 
-/** Lists as they would be written back to the file, e.g. `todo` or `wip:WIP`. */
-const serializeLists = (lists: BoardList[] | undefined): string[] | undefined =>
-  lists?.map(serializeList);
-const listEntries = (text: string): string[] | undefined =>
-  serializeLists(readBoard(text).lists);
+/** Tags of the `lists:` entries, i.e. the column names. */
+const listTags = (text: string): string[] | undefined =>
+  readBoard(text).lists?.map((list) => list.tag);
 
 test('isBoardFile matches only the board suffixes', () => {
   assert.equal(isBoardFile('kanban.kb.yaml'), true);
@@ -70,30 +67,30 @@ test('readBoard reports broken YAML instead of throwing', () => {
   assert.equal(board.cardTags.size, 0);
 });
 
-test('readBoard reads the board-owned lists', () => {
+test('readBoard reads the board-owned lists as plain tags', () => {
   const board = readBoard(
-    ['version: 1', 'lists:', '  - todo', '  - "in-progress:In Progress"', 'cards: {}', ''].join('\n'),
+    ['version: 1', 'lists:', '  - todo', '  - in-progress', 'cards: {}', ''].join('\n'),
   );
   assert.deepEqual(
-    board.lists?.map((list) => [list.id, list.title]),
+    board.lists?.map((list) => [list.id, list.tag]),
     [
-      ['todo', 'Todo'],
-      ['in-progress', 'In Progress'],
+      ['todo', 'todo'],
+      ['in-progress', 'in-progress'],
     ],
   );
   assert.equal(board.error, undefined);
 });
 
-test('readBoard accepts list objects and ignores malformed entries', () => {
+test('readBoard accepts {tag} / {name} list objects and ignores malformed entries', () => {
   const board = readBoard(
-    ['lists:', '  - tag: todo', '    title: To Do', '  - name: done', '  - 42', '  - null', ''].join('\n'),
+    ['lists:', '  - tag: todo', '  - name: done', '  - 42', '  - null', ''].join('\n'),
   );
-  assert.deepEqual(serializeLists(board.lists), ['todo:To Do', 'done', '42']);
+  assert.deepEqual(board.lists?.map((list) => list.tag), ['todo', 'done', '42']);
 });
 
 test('readBoard distinguishes missing lists from an explicit empty list', () => {
-  assert.equal(listEntries('version: 1\ncards: {}\n'), undefined);
-  assert.deepEqual(listEntries('version: 1\nlists: []\n'), []);
+  assert.equal(listTags('version: 1\ncards: {}\n'), undefined);
+  assert.deepEqual(listTags('version: 1\nlists: []\n'), []);
 });
 
 test('normalizeTags accepts sequences, comma lists and scalars', () => {
@@ -169,54 +166,52 @@ test('minimalEdit narrows a whole-file change to the diff', () => {
 });
 
 test('boardFileTemplate writes the board lists and round-trips', () => {
-  const template = boardFileTemplate(['backlog', 'in-progress:In Progress', 'done']);
-  assert.ok(template.includes('lists:\n  - backlog\n  - "in-progress:In Progress"\n  - done\n'));
+  const template = boardFileTemplate(['backlog', 'in-progress', 'done']);
+  assert.ok(template.includes('lists:\n  - backlog\n  - in-progress\n  - done\n'));
 
   const board = readBoard(template);
   assert.equal(board.error, undefined);
-  // Titles equal to the prettified tag collapse back to the short form.
-  assert.deepEqual(serializeLists(board.lists), ['backlog', 'in-progress', 'done']);
-  assert.equal(board.lists?.[1].title, 'In Progress');
+  assert.deepEqual(board.lists?.map((list) => list.tag), ['backlog', 'in-progress', 'done']);
   assert.equal(board.cardTags.size, 0);
+});
+
+test('boardFileTemplate quotes tags that need it', () => {
+  const template = boardFileTemplate(['#inbox']);
+  assert.ok(template.includes('  - "#inbox"'));
+  assert.deepEqual(listTags(template), ['#inbox']);
 });
 
 test('boardFileTemplate defaults to no custom lists (No status only)', () => {
   const template = boardFileTemplate();
   assert.ok(template.includes('lists: []'));
-  assert.deepEqual(listEntries(template), []);
+  assert.deepEqual(listTags(template), []);
 });
 
 test('addBoardList appends a list and rejects duplicates', () => {
   const start = 'version: 1\nlists: []\ncards:\n  a.md:\n    tags:\n      - bug\n';
   const added = addBoardList(start, 'todo');
   assert.equal(added.changed, true);
-  assert.deepEqual(listEntries(added.text), ['todo']);
+  assert.deepEqual(listTags(added.text), ['todo']);
   assert.deepEqual(readBoard(added.text).cardTags.get('a.md'), ['bug']);
 
-  const addedCustom = addBoardList(added.text, 'in-progress:In Progress');
-  assert.deepEqual(
-    readBoard(addedCustom.text).lists?.map((list) => [list.id, list.title]),
-    [
-      ['todo', 'Todo'],
-      ['in-progress', 'In Progress'],
-    ],
-  );
+  const second = addBoardList(added.text, 'in-progress');
+  assert.deepEqual(listTags(second.text), ['todo', 'in-progress']);
 
-  assert.throws(() => addBoardList(addedCustom.text, 'TODO'), /already exists/i);
-  assert.throws(() => addBoardList(addedCustom.text, '   '), /empty/i);
+  assert.throws(() => addBoardList(second.text, 'TODO'), /already exists/i);
+  assert.throws(() => addBoardList(second.text, '   '), /empty/i);
 });
 
 test('addBoardList inserts at the requested position', () => {
   const start = 'version: 1\nlists:\n  - todo\n  - done\ncards: {}\n';
 
   const first = addBoardList(start, 'backlog', { index: 0 });
-  assert.deepEqual(listEntries(first.text), ['backlog', 'todo', 'done']);
+  assert.deepEqual(listTags(first.text), ['backlog', 'todo', 'done']);
 
   const middle = addBoardList(first.text, 'review', { index: 2 });
-  assert.deepEqual(listEntries(middle.text), ['backlog', 'todo', 'review', 'done']);
+  assert.deepEqual(listTags(middle.text), ['backlog', 'todo', 'review', 'done']);
 
   const end = addBoardList(middle.text, 'archive', { index: 99 });
-  assert.deepEqual(listEntries(end.text), ['backlog', 'todo', 'review', 'done', 'archive']);
+  assert.deepEqual(listTags(end.text), ['backlog', 'todo', 'review', 'done', 'archive']);
 });
 
 test('addBoardList seeds lists from the fallback when the key is missing', () => {
@@ -224,7 +219,7 @@ test('addBoardList seeds lists from the fallback when the key is missing', () =>
     index: 1,
     fallbackLists: ['todo', 'done'],
   });
-  assert.deepEqual(listEntries(update.text), ['todo', 'wip', 'done']);
+  assert.deepEqual(listTags(update.text), ['todo', 'wip', 'done']);
 });
 
 test('moveBoardList reorders lists without touching cards', () => {
@@ -244,11 +239,11 @@ test('moveBoardList reorders lists without touching cards', () => {
 
   const moved = moveBoardList(start, 'review', 0);
   assert.equal(moved.changed, true);
-  assert.deepEqual(listEntries(moved.text), ['review', 'backlog', 'todo', 'done']);
+  assert.deepEqual(listTags(moved.text), ['review', 'backlog', 'todo', 'done']);
   assert.deepEqual(readBoard(moved.text).cardTags.get('a.md'), ['review']);
 
   const toEnd = moveBoardList(moved.text, 'review', 99);
-  assert.deepEqual(listEntries(toEnd.text), ['backlog', 'todo', 'done', 'review']);
+  assert.deepEqual(listTags(toEnd.text), ['backlog', 'todo', 'done', 'review']);
 });
 
 test('moveBoardList is a no-op for the same position or an unknown list', () => {
@@ -273,14 +268,14 @@ test('removeBoardList removes the list without touching cards', () => {
   ].join('\n');
   const removed = removeBoardList(start, 'todo');
   assert.equal(removed.changed, true);
-  assert.deepEqual(listEntries(removed.text), ['done']);
+  assert.deepEqual(listTags(removed.text), ['done']);
   assert.deepEqual(readBoard(removed.text).cardTags.get('a.md'), ['todo', 'bug']);
 
   const empty = removeBoardList(removed.text, 'done');
-  assert.deepEqual(listEntries(empty.text), []);
+  assert.deepEqual(listTags(empty.text), []);
 });
 
-test('renameBoardList changes only the display title', () => {
+test('renameListTag renames the tag on the list and on its cards', () => {
   const start = [
     'version: 1',
     'lists:',
@@ -290,34 +285,63 @@ test('renameBoardList changes only the display title', () => {
     '  a.md:',
     '    tags:',
     '      - todo',
+    '      - bug',
+    '  b.md:',
+    '    tags:',
+    '      - done',
     '',
   ].join('\n');
 
-  const renamed = renameBoardList(start, 'todo', 'To Do');
+  const renamed = renameListTag(start, 'todo', '待办');
   assert.equal(renamed.changed, true);
-  assert.deepEqual(
-    readBoard(renamed.text).lists?.map((list) => [list.tag, list.title]),
-    [
-      ['todo', 'To Do'],
-      ['done', 'Done'],
-    ],
-  );
-  assert.deepEqual(readBoard(renamed.text).cardTags.get('a.md'), ['todo']);
-
-  // Renaming back to the prettified tag collapses to the short form again.
-  assert.deepEqual(listEntries(renameBoardList(renamed.text, 'todo', 'Todo').text), ['todo', 'done']);
+  assert.deepEqual(listTags(renamed.text), ['待办', 'done']);
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('a.md'), ['待办', 'bug']);
+  // Other cards and their tags are untouched.
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('b.md'), ['done']);
 });
 
-test('renameBoardList is inert for no-ops, unknown lists and empty titles', () => {
+test('renameListTag rewrites the other tolerated card shapes', () => {
+  const start = [
+    'version: 1',
+    'lists: [todo]',
+    'cards:',
+    '  a.md:',
+    '    - todo',
+    '  b.md:',
+    '    tags: "todo, bug"',
+    '  c.md: todo',
+    '',
+  ].join('\n');
+
+  const renamed = renameListTag(start, 'todo', 'wip');
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('a.md'), ['wip']);
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('b.md'), ['wip', 'bug']);
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('c.md'), ['wip']);
+  assert.deepEqual(listTags(renamed.text), ['wip']);
+});
+
+test('renameListTag matches case-insensitively and can change case only', () => {
+  const start = 'version: 1\nlists:\n  - todo\ncards:\n  a.md:\n    tags:\n      - TODO\n';
+  const renamed = renameListTag(start, 'todo', 'Todo');
+  assert.deepEqual(listTags(renamed.text), ['Todo']);
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('a.md'), ['Todo']);
+});
+
+test('renameListTag is inert for no-ops, unknown lists and empty names', () => {
   const start = 'version: 1\nlists:\n  - todo\ncards: {}\n';
-  assert.equal(renameBoardList(start, 'todo', 'Todo').changed, false);
-  assert.equal(renameBoardList(start, 'missing', 'Anything').changed, false);
-  assert.throws(() => renameBoardList(start, 'todo', '   '), /cannot be empty/);
+  assert.equal(renameListTag(start, 'todo', 'todo').changed, false);
+  assert.equal(renameListTag(start, 'missing', 'anything').changed, false);
+  assert.throws(() => renameListTag(start, 'todo', '   '), /cannot be empty/);
 });
 
-test('renameBoardList seeds lists from the fallback when the key is missing', () => {
-  const update = renameBoardList('version: 1\ncards: {}\n', 'done', 'Shipped', ['todo', 'done']);
-  assert.deepEqual(listEntries(update.text), ['todo', 'done:Shipped']);
+test('renameListTag refuses to collide with another list', () => {
+  const start = 'version: 1\nlists:\n  - todo\n  - done\ncards: {}\n';
+  assert.throws(() => renameListTag(start, 'todo', 'DONE'), /already exists/i);
+});
+
+test('renameListTag seeds lists from the fallback when the key is missing', () => {
+  const update = renameListTag('version: 1\ncards: {}\n', 'done', 'shipped', ['todo', 'done']);
+  assert.deepEqual(listTags(update.text), ['todo', 'shipped']);
 });
 
 test('setCardTags preserves the lists section', () => {
