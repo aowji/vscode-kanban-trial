@@ -228,6 +228,88 @@ export function removeBoardList(
   return finishUpdate(doc, text);
 }
 
+/**
+ * Empties a list by removing its tag from every card. The list stays in
+ * `lists:`; the cards fall back to "No status" and keep their other tags.
+ * Cards that had no other tag lose their entry, like `setCardTags(..., [])`.
+ */
+export function clearBoardList(
+  text: string,
+  listId: string,
+  fallbackLists: readonly string[] = [],
+): StoreUpdate {
+  const targetId = listId.trim().toLowerCase();
+  if (!targetId) return noChange(text);
+
+  const doc = parseBoardForWrite(text);
+  if (!resolveListTag(doc, targetId, fallbackLists)) return noChange(text);
+  const cards = doc.get('cards', true);
+  if (!isMap(cards)) return noChange(text);
+
+  const emptied: number[] = [];
+  let changed = false;
+  cards.items.forEach((pair, index) => {
+    if (!removeTagNode(pair.value, targetId)) return;
+    changed = true;
+    if (cardTagsFromEntry(plainValue(pair.value)).length === 0) {
+      emptied.push(index);
+    }
+  });
+  if (!changed) return noChange(text);
+  for (let i = emptied.length - 1; i >= 0; i -= 1) cards.items.splice(emptied[i], 1);
+  return finishUpdate(doc, text);
+}
+
+/** Tag of the requested list, from the board file or the configured fallback. */
+function resolveListTag(
+  doc: Document,
+  targetId: string,
+  fallbackLists: readonly string[],
+): string | undefined {
+  const seq = doc.get('lists', true);
+  if (isSeq(seq)) {
+    return seq.items
+      .map((item) => listTagFromNode(item))
+      .find((tag) => tag?.toLowerCase() === targetId);
+  }
+  return fallbackLists
+    .map((tag) => tag.trim())
+    .find((tag) => tag.toLowerCase() === targetId);
+}
+
+/** Removes one tag from a card entry; returns true when anything changed. */
+function removeTagNode(node: unknown, targetId: string): boolean {
+  if (isSeq(node)) {
+    const before = node.items.length;
+    node.items = node.items.filter((item) => !hasTagValue(item, targetId));
+    return node.items.length !== before;
+  }
+  // `tags: [a, b]` lives one level down.
+  if (isMap(node)) return removeTagNode(node.get('tags', true), targetId);
+  if (!isScalar(node) || typeof node.value !== 'string') return false;
+
+  // A bare `a.md: todo` or a comma list, both tolerated on read.
+  const parts = node.value.split(',');
+  const kept = parts.filter((part) => part.trim().toLowerCase() !== targetId);
+  if (kept.length === parts.length) return false;
+  node.value = kept.join(',');
+  return true;
+}
+
+function hasTagValue(node: unknown, targetId: string): boolean {
+  return (
+    isScalar(node) &&
+    typeof node.value === 'string' &&
+    node.value.trim().toLowerCase() === targetId
+  );
+}
+
+function plainValue(node: unknown): unknown {
+  if (!node || typeof node !== 'object') return node;
+  const typed = node as { toJSON?: () => unknown };
+  return typeof typed.toJSON === 'function' ? typed.toJSON() : node;
+}
+
 function hasListTag(seq: YAMLSeq, tag: string, exceptIndex = -1): boolean {
   const id = tag.toLowerCase();
   return seq.items.some(

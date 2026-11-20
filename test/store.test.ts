@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   addBoardList,
   boardFileTemplate,
+  clearBoardList,
   isBoardFile,
   minimalEdit,
   moveBoardList,
@@ -290,6 +291,50 @@ test('removeBoardList removes the list without touching cards', () => {
 
   const empty = removeBoardList(removed.text, 'done');
   assert.deepEqual(listTags(empty.text), []);
+});
+
+test('clearBoardList removes the tag from every card shape', () => {
+  const start = [
+    'version: 1',
+    'lists:',
+    '  - todo',
+    '  - done',
+    'cards:',
+    '  a.md:',
+    '    tags:',
+    '      - todo',
+    '      - bug',
+    '  b.md: "todo, bug"',
+    '  c.md: todo',
+    '  d.md:',
+    '    tags:',
+    '      - done',
+    '',
+  ].join('\n');
+  const cleared = clearBoardList(start, 'todo');
+
+  assert.equal(cleared.changed, true);
+  // The list itself stays; only the cards lose the tag.
+  assert.deepEqual(listTags(cleared.text), ['todo', 'done']);
+  assert.deepEqual(readBoard(cleared.text).cardTags.get('a.md'), ['bug']);
+  assert.deepEqual(readBoard(cleared.text).cardTags.get('b.md'), ['bug']);
+  // A card with no other tag loses its entry, like setCardTags(..., []).
+  assert.equal(readBoard(cleared.text).cardTags.has('c.md'), false);
+  assert.deepEqual(readBoard(cleared.text).cardTags.get('d.md'), ['done']);
+});
+
+test('clearBoardList is inert for unknown or already-empty lists', () => {
+  const start = 'version: 1\nlists:\n  - todo\ncards:\n  a.md:\n    tags:\n      - done\n';
+  assert.equal(clearBoardList(start, 'nope').changed, false);
+  assert.equal(clearBoardList(start, 'todo').changed, false);
+  assert.equal(clearBoardList(start, '').changed, false);
+});
+
+test('clearBoardList falls back to the configured lists', () => {
+  const start = 'version: 1\ncards:\n  a.md:\n    tags:\n      - todo\n';
+  const cleared = clearBoardList(start, 'todo', ['todo', 'done']);
+  assert.deepEqual(listTags(cleared.text), undefined);
+  assert.equal(readBoard(cleared.text).cardTags.size, 0);
 });
 
 test('renameListTag renames the tag on the list and on its cards', () => {

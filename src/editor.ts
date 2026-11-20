@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import {
   buildBoardView,
   UNASSIGNED_LIST_ID,
+  UNASSIGNED_LIST_TITLE,
   type BoardList,
   type BoardView,
   type CardInput,
@@ -13,6 +14,7 @@ import {
 import { scanDirectory, toPosixPath, type ScanResult } from './core/scan';
 import {
   addBoardList,
+  clearBoardList,
   moveBoardList,
   readBoard,
   removeBoardList,
@@ -303,6 +305,9 @@ class KanbanEditor {
       case 'removeList':
         if (typeof message.listId === 'string') await this.removeList(message.listId);
         return;
+      case 'clearList':
+        if (typeof message.listId === 'string') await this.clearList(message.listId);
+        return;
       case 'renameList':
         if (typeof message.listId === 'string') await this.renameList(message.listId);
         return;
@@ -441,6 +446,37 @@ class KanbanEditor {
     if (listId === UNASSIGNED_LIST_ID) return;
     await this.runMutation(`removeList ${listId}`, () =>
       removeBoardList(this.document.getText(), listId, configTags()),
+    );
+  }
+
+  /** Empties a list by removing its tag from the cards that carry it. */
+  private async clearList(listId: string): Promise<void> {
+    if (listId === UNASSIGNED_LIST_ID) return;
+    const config = readConfig();
+    const board = readBoard(this.document.getText());
+    const list = (board.lists ?? config.lists).find((entry) => entry.id === listId);
+    if (!list) return;
+
+    const tagId = list.tag.toLowerCase();
+    const affected = [...board.cardTags.values()].filter((tags) =>
+      tags.some((tag) => tag.toLowerCase() === tagId),
+    ).length;
+    if (affected === 0) {
+      void vscode.window.showInformationMessage(
+        `Markdown Kanban: "${list.tag}" already has no cards.`,
+      );
+      return;
+    }
+
+    const choice = await vscode.window.showWarningMessage(
+      `Markdown Kanban: clear "${list.tag}"? ${affected} card(s) will move to "${UNASSIGNED_LIST_TITLE}".`,
+      { modal: true },
+      'Clear List',
+    );
+    if (choice !== 'Clear List') return;
+
+    await this.runMutation(`clearList ${listId}`, () =>
+      clearBoardList(this.document.getText(), listId, configTags()),
     );
   }
 

@@ -12,7 +12,7 @@
 - 列由看板文件里的 `lists:` 决定；**默认只有 `No status` 一列**，其它 list 可在 `*.kb.yaml` 里写，也可以直接在看板界面增删：
   - 最右端 `+ Add list` 追加新列
   - 拖拽列头左右移动即可重排顺序（顺序错了不用删了重加）
-  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Rename list` / `Collapse list` / `Remove list`，插入与改名都会弹出输入框
+  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Rename list` / `Collapse list` / `Clear list` / `Remove list`，插入与改名都会弹出输入框，清空会二次确认
 - **列可以折叠**：点列头左侧的 `❮` 收成窄条（只留竖排标题和计数），点窄条或 `❯` 展开；折叠的列照样能接收拖过来的卡片。折叠只是视图偏好（和搜索、标签过滤一样按窗口记住），不写进 `*.kb.yaml`
 - 没有列 tag 的文档进入最左侧的 “No status” 列；删除 list 不会丢失卡片原有 tag，卡片会自动回到 “No status”
 - **拖拽卡片换列**，或点卡片右上角的 `⋮` 菜单换列（键盘可用）
@@ -72,6 +72,7 @@ cards:
 
 - `lists:` 定义这个看板自己的列与列序，**每一条就是一个 tag，列名原样显示**（不做大小写/连字符转换）。不写（缺 `lists` 键）时退回设置里的 `markdownKanban.defaultLists`；显式写 `lists: []` 则是"只有 No status"
 - 改列名（列头 `⋮` → *Rename list*）= **改 tag 本身**：`lists:` 里那条，以及所有卡片上携带的同名 tag 一起改（大小写不敏感匹配），所以卡片会跟着新名字继续留在这一列
+- 清空列表（列头 `⋮` → *Clear list*）= 从该列所有卡片上移除这个 tag：卡片回到 `No status`（其它 tag 作为 chip 保留），`lists:` 里的列本身保留；只带这一个 tag 的卡片会删掉对应的记录
 - 列名大小写不敏感：`Todo` 与 `todo` 视为同一列，`lists:` 里重复的只保留第一个写法
 - key 是相对看板文件所在目录的 POSIX 路径；拖动卡片只会重写对应的这一条（注释、其它条目、`lists` 原样保留）
 - 列 tag 取 `lists` 里的那几个；一张卡片只会落在一列
@@ -103,7 +104,7 @@ cards:
 | 点看板右上角 `✎` | 切换成文本编辑器编辑这个 YAML |
 | 最右端 `+ Add list` | 在末尾追加一列（表单内输入列名，它同时是卡片要携带的 tag） |
 | 拖拽列头 | 左右拖动即可重排列顺序（`No status` 不可拖），拖到最右槽 = 移到末尾 |
-| 列头 `⋮` 菜单 | `Move left` / `Move right` / `Add list before` / `Add list after` / `Rename list` / `Collapse list` / `Remove list`，键盘可达 |
+| 列头 `⋮` 菜单 | `Move left` / `Move right` / `Add list before` / `Add list after` / `Rename list` / `Collapse list` / `Clear list` / `Remove list`，键盘可达 |
 | 列头 `×` | 删除该 list（卡片 tag 保留，回到 `No status`） |
 
 ## 开发
@@ -112,7 +113,7 @@ cards:
 npm run compile          # 打包 dist/extension.js
 npm run watch            # 监听编译
 npm run typecheck        # tsc 类型检查（扩展 + webview）
-npm test                 # 59 个测试：文档扫描与摘要 / 看板文件读写 / list 增删改名重排 / 分列 / 自定义编辑器集成
+npm test                 # 62 个测试：文档扫描与摘要 / 看板文件读写 / list 增删改名清空重排 / 分列 / 自定义编辑器集成
 npm run typecheck:webview # 只检查 media/main.js（@ts-check）
 ```
 

@@ -215,6 +215,7 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
         return Promise.resolve(undefined);
       },
       showInformationMessage: async () => undefined,
+      showWarningMessage: async () => 'Clear List',
       get visibleTextEditors() {
         return harness.visibleEditors;
       },
@@ -550,6 +551,19 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     );
     assert.equal(listEntries(renamed)?.at(-1), 'reviewed');
     assert.deepEqual(readBoard(renamed).cardTags.get('fix-login.md'), ['bug', 'reviewed']);
+
+    // Clearing a list strips its tag from the cards but keeps the list itself.
+    fake.send({ type: 'clearList', listId: 'reviewed' });
+    const cleared = await waitForText(
+      boardPath,
+      (text) => {
+        const tags = readBoard(text).cardTags.get('fix-login.md') ?? [];
+        return tags.length === 1 && tags[0] === 'bug';
+      },
+      'the cleared list',
+    );
+    assert.ok(listEntries(cleared)?.includes('reviewed'));
+    assert.deepEqual(readBoard(cleared).cardTags.get('fix-login.md'), ['bug']);
 
     // External edits to the board file refresh the webview.
     const statesBefore = fake.harness.messages.filter((m) => m.type === 'state').length;

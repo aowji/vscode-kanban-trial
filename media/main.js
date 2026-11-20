@@ -674,6 +674,7 @@
       run: () => toggleCollapsed(listId),
     });
     items.push({ separator: true });
+    items.push({ label: 'Clear list', run: () => api.postMessage({ type: 'clearList', listId: listId }) });
     items.push({ label: 'Remove list', run: () => api.postMessage({ type: 'removeList', listId: listId }) });
     showMenu(anchor, items);
   }
