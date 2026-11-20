@@ -2,17 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   buildBoardView,
-  formatColumnEntry,
-  parseColumns,
-  resolveColumns,
-  statusTagOf,
+  findList,
+  parseLists,
+  resolveLists,
+  serializeList,
   titleForTag,
-  UNASSIGNED_COLUMN_ID,
-  type BoardCardInput,
-  type ParsedColumn,
+  UNASSIGNED_LIST_ID,
+  type CardInput,
+  type ParsedList,
 } from '../src/core/board';
 
-function card(overrides: Partial<BoardCardInput> & { title: string }): BoardCardInput {
+function card(overrides: Partial<CardInput> & { title: string }): CardInput {
   return {
     absPath: `C:/notes/${overrides.title}.md`,
     relPath: `notes/${overrides.title}.md`,
@@ -23,11 +23,11 @@ function card(overrides: Partial<BoardCardInput> & { title: string }): BoardCard
   };
 }
 
-const columns: ParsedColumn[] = parseColumns(['backlog', 'todo', 'in-progress:In Progress', 'done']);
+const lists: ParsedList[] = parseLists(['backlog', 'todo', 'in-progress:In Progress', 'done']);
 
-test('parseColumns accepts display titles and lower-cases ids', () => {
+test('parseLists accepts display titles and lower-cases ids', () => {
   assert.deepEqual(
-    columns.map((column) => [column.id, column.tag, column.title]),
+    lists.map((list) => [list.id, list.tag, list.title]),
     [
       ['backlog', 'backlog', 'Backlog'],
       ['todo', 'todo', 'Todo'],
@@ -37,9 +37,10 @@ test('parseColumns accepts display titles and lower-cases ids', () => {
   );
 });
 
-test('parseColumns drops duplicates and returns empty when empty', () => {
-  assert.deepEqual(parseColumns(['Todo', 'todo']).map((c) => c.id), ['todo']);
-  assert.deepEqual(parseColumns([]), []);
+test('parseLists drops duplicates and returns empty when empty', () => {
+  assert.deepEqual(parseLists(['Todo', 'todo']).map((list) => list.id), ['todo']);
+  assert.deepEqual(parseLists([]), []);
+  assert.deepEqual(parseLists(undefined), []);
 });
 
 test('titleForTag keeps acronyms and prettifies separators', () => {
@@ -48,67 +49,65 @@ test('titleForTag keeps acronyms and prettifies separators', () => {
   assert.equal(titleForTag('TODO'), 'TODO');
 });
 
-test('resolveColumns prefers the board file over the workspace setting', () => {
-  const fallback = parseColumns(['backlog', 'done']);
-  const fromBoard = resolveColumns(['design', 'build:Build'], fallback);
-  assert.deepEqual(fromBoard.map((column) => [column.id, column.title]), [
-    ['design', 'Design'],
-    ['build', 'Build'],
-  ]);
+test('serializeList only spells out a custom title', () => {
+  assert.equal(serializeList({ id: 'in-progress', tag: 'in-progress', title: 'In Progress' }), 'in-progress');
+  assert.equal(serializeList({ id: 'wip', tag: 'wip', title: 'Work In Progress' }), 'wip:Work In Progress');
+});
+
+test('resolveLists prefers the board file over the workspace setting', () => {
+  const fallback = parseLists(['backlog', 'done']);
 
   assert.deepEqual(
-    resolveColumns(undefined, fallback).map((column) => column.id),
-    ['backlog', 'done'],
+    resolveLists(['design', 'build:Build'], fallback).map((list) => [list.id, list.title]),
+    [
+      ['design', 'Design'],
+      ['build', 'Build'],
+    ],
   );
-  assert.deepEqual(resolveColumns([], fallback), []);
+  assert.deepEqual(resolveLists(undefined, fallback).map((list) => list.id), ['backlog', 'done']);
+  assert.deepEqual(resolveLists([], fallback), []);
 });
 
-test('formatColumnEntry only spells out a custom title', () => {
-  assert.equal(formatColumnEntry({ id: 'in-progress', tag: 'in-progress', title: 'In Progress' }), 'in-progress');
-  assert.equal(formatColumnEntry({ id: 'wip', tag: 'wip', title: 'Work In Progress' }), 'wip:Work In Progress');
+test('findList returns the list owning the first matching tag', () => {
+  assert.equal(findList(['bug', 'Todo'], lists)?.id, 'todo');
+  assert.equal(findList(['bug'], lists), undefined);
 });
 
-test('statusTagOf returns the first tag owned by a column', () => {
-  assert.equal(statusTagOf(['bug', 'Todo'], columns), 'todo');
-  assert.equal(statusTagOf(['bug'], columns), null);
-});
-
-test('buildBoardView groups cards, keeps extra tags and hides the status tag', () => {
+test('buildBoardView groups cards, keeps extra tags and drops the list tag', () => {
   const view = buildBoardView(
     [
       card({ title: 'old todo', tags: ['todo', 'bug'], updated: 1 }),
       card({ title: 'new todo', tags: ['todo'], updated: 9 }),
       card({ title: 'loose', tags: ['idea'], updated: 5 }),
     ],
-    { columns },
+    { lists },
   );
 
   assert.deepEqual(
-    view.columns.map((column) => column.id),
-    [UNASSIGNED_COLUMN_ID, 'backlog', 'todo', 'in-progress', 'done'],
+    view.lists.map((list) => list.id),
+    [UNASSIGNED_LIST_ID, 'backlog', 'todo', 'in-progress', 'done'],
   );
   assert.equal(view.totalCards, 3);
 
-  const todo = view.columns.find((column) => column.id === 'todo')!;
+  const todo = view.lists.find((list) => list.id === 'todo')!;
   assert.deepEqual(todo.cards.map((entry) => entry.title), ['new todo', 'old todo']);
-  assert.deepEqual(todo.cards[1].tags, ['bug']);
-  assert.equal(todo.cards[1].statusTag, 'todo');
+  assert.deepEqual(todo.cards[1].extraTags, ['bug']);
+  assert.equal(todo.cards[1].listTag, 'todo');
+  assert.equal(todo.cards[1].listId, 'todo');
 
-  const unassigned = view.columns[0];
+  const unassigned = view.lists[0];
   assert.equal(unassigned.tag, null);
   assert.deepEqual(unassigned.cards.map((entry) => entry.title), ['loose']);
+  assert.equal(unassigned.cards[0].listTag, null);
 });
 
-test('buildBoardView keeps the unassigned column visible even when empty', () => {
-  const view = buildBoardView([card({ title: 'a', tags: ['done'] })], { columns });
-  assert.deepEqual(view.columns.map((column) => column.id), [
-    UNASSIGNED_COLUMN_ID,
-    'backlog',
-    'todo',
-    'in-progress',
-    'done',
-  ]);
-  assert.equal(view.columns[0].cards.length, 0);
+test('buildBoardView keeps the unassigned list visible even when empty', () => {
+  const view = buildBoardView([card({ title: 'a', tags: ['done'] })], { lists });
+  assert.deepEqual(
+    view.lists.map((list) => list.id),
+    [UNASSIGNED_LIST_ID, 'backlog', 'todo', 'in-progress', 'done'],
+  );
+  assert.equal(view.lists[0].cards.length, 0);
 });
 
 test('buildBoardView sorts by title when asked', () => {
@@ -117,8 +116,8 @@ test('buildBoardView sorts by title when asked', () => {
       card({ title: 'Zebra', tags: ['todo'], updated: 1 }),
       card({ title: 'apple', tags: ['todo'], updated: 2 }),
     ],
-    { columns, sortBy: 'title', showUnassigned: false },
+    { lists, sortBy: 'title', showUnassigned: false },
   );
-  const todo = view.columns.find((column) => column.id === 'todo')!;
+  const todo = view.lists.find((list) => list.id === 'todo')!;
   assert.deepEqual(todo.cards.map((entry) => entry.title), ['apple', 'Zebra']);
 });

@@ -7,7 +7,7 @@ import {
   collectMarkdownFiles,
   deriveSummary,
   deriveTitle,
-  scanWorkspace,
+  scanDirectory,
 } from '../src/core/scan';
 
 let root = '';
@@ -35,7 +35,7 @@ after(async () => {
   if (root) await fs.rm(root, { recursive: true, force: true });
 });
 
-test('collectMarkdownFiles walks subdirectories and skips ignored folders', async () => {
+test('collectMarkdownFiles walks subdirectories and skips excluded folders', async () => {
   const { files, truncated } = await collectMarkdownFiles(root);
   const relative = files.map((file) => nodePath.relative(root, file).split(nodePath.sep).join('/'));
   assert.deepEqual(relative, [
@@ -52,16 +52,23 @@ test('collectMarkdownFiles honours the file cap', async () => {
   assert.equal(truncated, true);
 });
 
-test('scanWorkspace returns titles and summaries without reading tags', async () => {
-  const result = await scanWorkspace([{ label: 'root', dir: root }]);
+test('collectMarkdownFiles respects a custom exclusion list', async () => {
+  // A custom list replaces the defaults, so node_modules is scanned again.
+  const { files } = await collectMarkdownFiles(root, { excludeDirectories: ['notes'] });
+  const relative = files.map((file) => nodePath.relative(root, file).split(nodePath.sep).join('/'));
+  assert.deepEqual(relative, ['node_modules/pkg/ignored.md', 'todo-card.md']);
+});
+
+test('scanDirectory returns titles, summaries and POSIX paths', async () => {
+  const result = await scanDirectory(root);
   assert.equal(result.fileCount, 3);
+  assert.equal(result.truncated, false);
 
   const byPath = new Map(result.cards.map((card) => [card.relPath, card]));
   const todo = byPath.get('todo-card.md')!;
   assert.equal(todo.title, 'Front matter title');
   assert.equal(todo.summary, 'First paragraph of the card.');
   assert.ok(todo.updated > 0);
-  assert.equal('tags' in todo, false, 'the board owns tags, not the document');
 
   const heading = byPath.get('notes/heading-card.markdown')!;
   assert.equal(heading.title, 'Heading wins');
@@ -72,17 +79,8 @@ test('scanWorkspace returns titles and summaries without reading tags', async ()
   assert.equal(bare.summary, 'no heading at all');
 });
 
-test('scanWorkspace prefixes paths when there are several roots', async () => {
-  const result = await scanWorkspace([
-    { label: 'one', dir: root },
-    { label: 'two', dir: nodePath.join(root, 'notes') },
-  ]);
-  assert.ok(result.cards.some((card) => card.relPath === 'one/todo-card.md'));
-  assert.ok(result.cards.some((card) => card.relPath === 'two/deep/bare-file.md'));
-});
-
-test('scanWorkspace can read from unsaved buffers', async () => {
-  const result = await scanWorkspace([{ label: 'root', dir: root }], {
+test('scanDirectory can read from unsaved buffers', async () => {
+  const result = await scanDirectory(root, {
     readText: async (absPath) =>
       absPath.endsWith('todo-card.md')
         ? '---\ntitle: Edited but not saved\n---\n\n# Edited but not saved\n'
@@ -92,11 +90,11 @@ test('scanWorkspace can read from unsaved buffers', async () => {
   assert.equal(todo.title, 'Edited but not saved');
 });
 
-test('scanWorkspace surfaces broken front matter instead of dropping the card', async () => {
+test('scanDirectory surfaces broken front matter instead of dropping the card', async () => {
   const broken = nodePath.join(root, 'broken.md');
   await fs.writeFile(broken, '---\ntags: [unclosed\n---\nbody\n');
   try {
-    const result = await scanWorkspace([{ label: 'root', dir: root }]);
+    const result = await scanDirectory(root);
     const card = result.cards.find((entry) => entry.relPath === 'broken.md')!;
     assert.match(card.error ?? '', /Invalid front matter/);
   } finally {
@@ -107,6 +105,7 @@ test('scanWorkspace surfaces broken front matter instead of dropping the card', 
 test('deriveTitle falls back to the file name', () => {
   assert.equal(deriveTitle({}, 'nothing here', 'my-note.md'), 'my-note');
   assert.equal(deriveTitle({ title: '  Titled  ' }, '', 'x.md'), 'Titled');
+  assert.equal(deriveTitle({ name: 'not used' }, '', 'from-name.md'), 'from-name');
 });
 
 test('deriveSummary stops at the first blank line and strips markup', () => {

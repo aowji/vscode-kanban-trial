@@ -202,7 +202,7 @@ button {
   scrollbar-width: thin;
 }
 
-.col {
+.list {
   flex: 0 0 288px;
   width: 288px;
   display: flex;
@@ -215,7 +215,7 @@ button {
   overflow: hidden;
 }
 
-.col-head {
+.list-head {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -224,7 +224,7 @@ button {
   flex: 0 0 auto;
 }
 
-.col-dot {
+.list-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -232,23 +232,23 @@ button {
   flex: 0 0 auto;
 }
 
-.col:nth-child(5n + 2) .col-dot {
+.list:nth-child(5n + 2) .list-dot {
   background: var(--vscode-charts-purple, #b180d7);
 }
 
-.col:nth-child(5n + 3) .col-dot {
+.list:nth-child(5n + 3) .list-dot {
   background: var(--vscode-charts-yellow, #cca700);
 }
 
-.col:nth-child(5n + 4) .col-dot {
+.list:nth-child(5n + 4) .list-dot {
   background: var(--vscode-charts-orange, #d18616);
 }
 
-.col:nth-child(5n + 5) .col-dot {
+.list:nth-child(5n + 5) .list-dot {
   background: var(--vscode-charts-green, #89d185);
 }
 
-.col-title {
+.list-title {
   margin: 0;
   font-size: 0.85em;
   font-weight: 600;
@@ -260,7 +260,7 @@ button {
   flex: 1 1 auto;
 }
 
-.col-count {
+.list-count {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-badge-background, rgba(128, 128, 128, 0.3));
@@ -271,8 +271,8 @@ button {
   flex: 0 0 auto;
 }
 
-.col-menu,
-.col-remove {
+.list-menu,
+.list-remove {
   border: none;
   background: none;
   color: var(--vscode-icon-foreground, var(--vscode-foreground));
@@ -286,45 +286,45 @@ button {
   flex: 0 0 auto;
 }
 
-.col-menu:hover,
-.col-remove:hover {
+.list-menu:hover,
+.list-remove:hover {
   opacity: 1;
   background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 }
 
-.col-head[draggable='true'] {
+.list-head[draggable='true'] {
   cursor: grab;
 }
 
-.col-head[draggable='true']:active {
+.list-head[draggable='true']:active {
   cursor: grabbing;
 }
 
-.col.dragging-list {
+.list.dragging-list {
   opacity: 0.45;
 }
 
-.col.drop-before {
+.list.drop-before {
   box-shadow: inset 2px 0 0 var(--vscode-focusBorder);
 }
 
-.col.drop-after {
+.list.drop-after {
   box-shadow: inset -2px 0 0 var(--vscode-focusBorder);
 }
 
 /* The single trailing slot that appends a list (and accepts a dropped column). */
-.col-add-slot {
+.list-add-slot {
   flex: 0 0 220px;
   align-self: flex-start;
 }
 
-.col-add-slot.drop-target {
+.list-add-slot.drop-target {
   background: var(--vscode-list-hoverBackground);
   border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
 }
 
-.col-add-btn {
+.list-add-btn {
   width: 100%;
   padding: 10px 12px;
   border-radius: 6px;
@@ -334,13 +334,13 @@ button {
   text-align: left;
 }
 
-.col-add-btn:hover {
+.list-add-btn:hover {
   border-color: var(--vscode-focusBorder);
   color: var(--vscode-foreground);
   background: var(--vscode-list-hoverBackground);
 }
 
-.col-add-form {
+.list-add-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -351,7 +351,7 @@ button {
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
 }
 
-.col-add-form input {
+.list-add-form input {
   width: 100%;
   padding: 5px 8px;
   border-radius: 4px;
@@ -361,11 +361,11 @@ button {
   outline: none;
 }
 
-.col-add-form input:focus {
+.list-add-form input:focus {
   border-color: var(--vscode-focusBorder);
 }
 
-.col-add-actions {
+.list-add-actions {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -383,7 +383,7 @@ button {
   background: var(--vscode-button-hoverBackground);
 }
 
-.col-body {
+.list-body {
   flex: 1 1 auto;
   min-height: 64px;
   overflow-y: auto;
@@ -396,12 +396,12 @@ button {
   transition: background 0.12s ease;
 }
 
-.col-body.drop-target {
+.list-body.drop-target {
   background: var(--vscode-list-hoverBackground);
   box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
 }
 
-.col-empty {
+.list-empty {
   color: var(--vscode-descriptionForeground);
   font-size: 0.9em;
   text-align: center;

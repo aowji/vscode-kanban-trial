@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
-import { parseColumns, type ParsedColumn } from './core/board';
-import { DEFAULT_IGNORED_DIRS } from './core/scan';
+import { parseLists, type ParsedList } from './core/board';
+import { DEFAULT_EXCLUDED_DIRS } from './core/scan';
 
 export const CONFIG_SECTION = 'markdownKanban';
 
 export interface BoardConfig {
-  columns: ParsedColumn[];
-  ignoredDirs: string[];
+  /** Default lists for new board files; the fallback when a board has no `lists` key. */
+  lists: ParsedList[];
+  excludeDirectories: string[];
   sortBy: 'updated' | 'title';
   showUnassigned: boolean;
   openMode: 'beside' | 'activeTab';
@@ -16,8 +17,8 @@ export interface BoardConfig {
 export function readConfig(): BoardConfig {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   return {
-    columns: parseColumns(config.get<string[]>('columns')),
-    ignoredDirs: config.get<string[]>('excludeDirectories') ?? [...DEFAULT_IGNORED_DIRS],
+    lists: parseLists(config.get<string[]>('defaultLists')),
+    excludeDirectories: config.get<string[]>('excludeDirectories') ?? [...DEFAULT_EXCLUDED_DIRS],
     sortBy: config.get<string>('sortBy') === 'title' ? 'title' : 'updated',
     showUnassigned: config.get<boolean>('showUnassigned') ?? true,
     openMode: config.get<string>('openMode') === 'activeTab' ? 'activeTab' : 'beside',

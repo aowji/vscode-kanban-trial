@@ -1,6 +1,8 @@
 (function () {
   'use strict';
 
+  const UNASSIGNED_LIST_ID = '__unassigned';
+
   const api = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : createPreviewApi();
 
   /** @type {{ view: any, context: any } | null} */
@@ -8,7 +10,7 @@
   let busy = false;
   let query = '';
   const tagFilter = new Set();
-  let dragId = null;
+  let dragCardId = null;
   let dragListId = null;
   let menu = null;
   let addingList = false;
@@ -50,23 +52,30 @@
 
   function allCards() {
     if (!model) return [];
-    return model.view.columns.reduce((cards, column) => cards.concat(column.cards), []);
+    return model.view.lists.reduce((cards, list) => cards.concat(list.cards), []);
   }
 
-  function findCard(id) {
-    return allCards().find((card) => card.id === id) || null;
+  function findCard(cardId) {
+    return allCards().find((card) => card.id === cardId) || null;
   }
 
-  function matches(card) {
+  /** Lists that live in the board file; the "No status" bucket is not one of them. */
+  function boardLists() {
+    return model ? model.view.lists.filter((list) => list.tag !== null) : [];
+  }
+
+  function cardMatchesFilters(card) {
     if (tagFilter.size > 0) {
-      const tags = new Set(card.tags.map((tag) => tag.toLowerCase()));
-      if (card.statusTag) tags.add(card.statusTag.toLowerCase());
+      const tags = new Set(card.extraTags.map((tag) => tag.toLowerCase()));
+      if (card.listTag) tags.add(card.listTag.toLowerCase());
       for (const tag of tagFilter) {
         if (!tags.has(tag)) return false;
       }
     }
     if (!query) return true;
-    const haystack = [card.title, card.path, card.summary, card.tags.join(' ')].join(' ').toLowerCase();
+    const haystack = [card.title, card.path, card.summary, card.extraTags.join(' ')]
+      .join(' ')
+      .toLowerCase();
     return haystack.indexOf(query.toLowerCase()) !== -1;
   }
 
@@ -95,7 +104,7 @@
     search.addEventListener('input', () => {
       query = search.value.trim();
       persist();
-      renderColumns();
+      renderLists();
       renderStats();
     });
 
@@ -113,7 +122,7 @@
     renderStats();
     renderTagbar();
     renderNotice();
-    renderColumns();
+    renderLists();
     renderPlaceholder();
     setBusy(busy);
   }
@@ -122,12 +131,12 @@
     const stats = document.getElementById('stats');
     if (!stats || !model) return;
     const total = model.view.totalCards;
-    const shown = allCards().filter(matches).length;
-    const parts = [];
-    parts.push(shown === total ? total + ' card' + (total === 1 ? '' : 's') : shown + ' of ' + total + ' cards');
-    parts.push(model.context.fileCount + ' file' + (model.context.fileCount === 1 ? '' : 's'));
-    parts.push(model.context.boardFileName);
-    stats.textContent = parts.join(' \u00b7 ');
+    const shown = allCards().filter(cardMatchesFilters).length;
+    const cards = shown === total
+      ? total + ' card' + (total === 1 ? '' : 's')
+      : shown + ' of ' + total + ' cards';
+    const files = model.context.fileCount + ' file' + (model.context.fileCount === 1 ? '' : 's');
+    stats.textContent = [cards, files, model.context.boardFileName].join(' \u00b7 ');
     stats.title = model.context.boardFile;
   }
 
@@ -137,7 +146,7 @@
 
     const counts = new Map();
     for (const card of allCards()) {
-      const tags = card.statusTag ? [card.statusTag].concat(card.tags) : card.tags;
+      const tags = card.listTag ? [card.listTag].concat(card.extraTags) : card.extraTags;
       for (const tag of tags) {
         const key = tag.toLowerCase();
         const entry = counts.get(key) || { label: tag, count: 0 };
@@ -153,18 +162,22 @@
     }
     tagbar.hidden = false;
 
-    const items = [...counts.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
+    const items = [...counts.entries()].sort(
+      (a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]),
+    );
     const chips = items
       .map(([key, entry]) => {
-        const active = tagFilter.has(key) ? ' chip-active' : '';
+        const active = tagFilter.has(key);
         return (
-          '<button type="button" class="chip tag-filter' + active + '" data-tag="' + esc(key) + '" aria-pressed="' +
-          (active ? 'true' : 'false') + '">' + esc(entry.label) +
-          '<span class="chip-count">' + entry.count + '</span></button>'
+          '<button type="button" class="chip tag-filter' + (active ? ' chip-active' : '') +
+          '" data-tag="' + esc(key) + '" aria-pressed="' + (active ? 'true' : 'false') + '">' +
+          esc(entry.label) + '<span class="chip-count">' + entry.count + '</span></button>'
         );
       })
       .join('');
-    const clear = tagFilter.size > 0 ? '<button type="button" class="link-button" id="clear-tags">Clear filters</button>' : '';
+    const clear = tagFilter.size > 0
+      ? '<button type="button" class="link-button" id="clear-tags">Clear filters</button>'
+      : '';
     tagbar.innerHTML = '<span class="tagbar-label">Tags</span>' + chips + clear;
 
     const clearButton = document.getElementById('clear-tags');
@@ -181,27 +194,30 @@
     const notice = document.getElementById('notice');
     if (!notice || !model) return;
     const messages = [];
-    if (model.context.storeError) {
-      messages.push(model.context.storeError);
-    }
+    if (model.context.storeError) messages.push(model.context.storeError);
     if (model.context.truncated) {
-      messages.push('Only the first ' + model.context.fileCount + ' Markdown files were scanned. Raise markdownKanban.maxFiles to see more.');
+      messages.push(
+        'Only the first ' + model.context.fileCount +
+        ' Markdown files were scanned. Raise markdownKanban.maxFiles to see more.',
+      );
     }
     if (model.context.staleEntries > 0) {
-      messages.push(model.context.staleEntries + ' saved card(s) point at documents that no longer exist; they are ignored until the document comes back.');
+      messages.push(
+        model.context.staleEntries +
+        ' saved card(s) point at documents that no longer exist; they are ignored until the document comes back.',
+      );
     }
     notice.hidden = messages.length === 0;
     notice.textContent = messages.join(' ');
   }
 
   function cardHtml(card) {
-    const classes = ['card'];
-    if (card.error) classes.push('card-error');
-    const chips = card.tags
+    const chips = card.extraTags
       .map((tag) => '<button type="button" class="chip" data-tag="' + esc(tag.toLowerCase()) + '">' + esc(tag) + '</button>')
       .join('');
     return [
-      '<article class="' + classes.join(' ') + '" draggable="true" data-card="' + esc(card.id) + '" data-column="' + esc(card.columnId) + '" tabindex="0">',
+      '<article class="card' + (card.error ? ' card-error' : '') + '" draggable="true" data-card="' + esc(card.id) +
+        '" data-list="' + esc(card.listId) + '" tabindex="0">',
       '<div class="card-title">' + esc(card.title) + '</div>',
       card.summary ? '<p class="card-summary">' + esc(card.summary) + '</p>' : '',
       chips ? '<div class="card-tags">' + chips + '</div>' : '',
@@ -215,15 +231,44 @@
     ].join('');
   }
 
-  function realColumns() {
-    return model ? model.view.columns.filter((column) => column.tag !== null) : [];
+  function listHtml(list) {
+    const cards = list.cards.filter(cardMatchesFilters);
+    const count = cards.length === list.cards.length
+      ? String(list.cards.length)
+      : cards.length + '/' + list.cards.length;
+    const body = cards.length
+      ? cards.map(cardHtml).join('')
+      : '<div class="list-empty">' +
+        (list.tag === null
+          ? (model.view.totalCards === 0
+            ? 'No Markdown documents yet. Create a .md file in VS Code.'
+            : 'Drag a card here to clear its status')
+          : 'No cards') +
+        '</div>';
+    const isBoardList = list.tag !== null;
+    const headAttrs = isBoardList ? ' draggable="true" data-drag-list="' + esc(list.id) + '"' : '';
+    const actions = isBoardList
+      ? '<button type="button" class="list-menu" data-menu-list="' + esc(list.id) + '" aria-haspopup="menu" title="List actions" aria-label="List actions ' + esc(list.title) + '">&#x22ee;</button>' +
+        '<button type="button" class="list-remove" data-remove-list="' + esc(list.id) + '" title="Remove list" aria-label="Remove list ' + esc(list.title) + '">&times;</button>'
+      : '';
+    return [
+      '<section class="list" data-list="' + esc(list.id) + '">',
+      '<header class="list-head"' + headAttrs + '>',
+      '<span class="list-dot" aria-hidden="true"></span>',
+      '<h2 class="list-title">' + esc(list.title) + '</h2>',
+      '<span class="list-count">' + esc(count) + '</span>',
+      actions,
+      '</header>',
+      '<div class="list-body" data-list="' + esc(list.id) + '">' + body + '</div>',
+      '</section>',
+    ].join('');
   }
 
   function addListFormHtml() {
     return [
-      '<form class="col-add-form" data-add-form>',
+      '<form class="list-add-form" data-add-form>',
       '<input type="text" class="add-list-input" placeholder="tag or tag:Title" aria-label="New list tag" autocomplete="off" spellcheck="false" value="' + esc(addListDraft) + '" />',
-      '<div class="col-add-actions">',
+      '<div class="list-add-actions">',
       '<button type="submit" class="primary-button">Add</button>',
       '<button type="button" class="icon-button" data-cancel-add title="Cancel" aria-label="Cancel">&times;</button>',
       '</div>',
@@ -231,69 +276,25 @@
     ].join('');
   }
 
-  /** The only slot on the board: appends a list, and accepts a dropped column. */
-  function addSlotHtml() {
-    const attrs = ' data-add-slot="end" data-gap-anchor=""';
-    if (addingList) {
-      return '<div class="col-add-slot" ' + attrs + '>' + addListFormHtml() + '</div>';
-    }
-    return (
-      '<div class="col-add-slot" ' + attrs + '>' +
-      '<button type="button" class="col-add-btn" data-add-open>+ Add list</button>' +
-      '</div>'
-    );
+  /** The single trailing slot that appends a list, and accepts a dropped list. */
+  function addListSlotHtml() {
+    return addingList
+      ? '<div class="list-add-slot">' + addListFormHtml() + '</div>'
+      : '<div class="list-add-slot"><button type="button" class="list-add-btn" data-add-open>+ Add list</button></div>';
   }
 
-  function columnHtml(column) {
-    const cards = column.cards.filter(matches);
-    const count = cards.length === column.cards.length
-      ? String(column.cards.length)
-      : cards.length + '/' + column.cards.length;
-    const body = cards.length
-      ? cards.map(cardHtml).join('')
-      : '<div class="col-empty">' +
-        (column.tag === null
-          ? (model.view.totalCards === 0
-            ? 'No Markdown documents yet. Create a .md file in VS Code.'
-            : 'Drag a card here to clear its status')
-          : 'No cards') +
-        '</div>';
-    const isList = column.tag !== null;
-    const headAttrs = isList
-      ? ' draggable="true" data-drag-list="' + esc(column.id) + '"'
-      : '';
-    const actions = isList
-      ? '<button type="button" class="col-menu" data-menu-column="' + esc(column.id) + '" aria-haspopup="menu" title="List actions" aria-label="List actions ' + esc(column.title) + '">&#x22ee;</button>' +
-        '<button type="button" class="col-remove" data-remove-list="' + esc(column.id) + '" title="Remove list" aria-label="Remove list ' + esc(column.title) + '">&times;</button>'
-      : '';
-    return [
-      '<section class="col" data-column="' + esc(column.id) + '">',
-      '<header class="col-head"' + headAttrs + '>',
-      '<span class="col-dot" aria-hidden="true"></span>',
-      '<h2 class="col-title">' + esc(column.title) + '</h2>',
-      '<span class="col-count">' + esc(count) + '</span>',
-      actions,
-      '</header>',
-      '<div class="col-body" data-column="' + esc(column.id) + '">' + body + '</div>',
-      '</section>',
-    ].join('');
-  }
-
-  function renderColumns() {
+  function renderLists() {
     const board = document.getElementById('board');
     if (!board || !model) return;
 
     const scrollTops = new Map();
-    board.querySelectorAll('.col-body').forEach((body) => scrollTops.set(body.dataset.column, body.scrollTop));
+    board.querySelectorAll('.list-body').forEach((body) => scrollTops.set(body.dataset.list, body.scrollTop));
     const scrollLeft = board.scrollLeft;
 
-    const parts = model.view.columns.map(columnHtml);
-    parts.push(addSlotHtml());
-
-    board.innerHTML = parts.join('');
+    board.innerHTML = model.view.lists.map(listHtml).join('') + addListSlotHtml();
     board.scrollLeft = scrollLeft;
-    board.querySelectorAll('.col-body').forEach((body) => {
-      const top = scrollTops.get(body.dataset.column);
+    board.querySelectorAll('.list-body').forEach((body) => {
+      const top = scrollTops.get(body.dataset.list);
       if (top) body.scrollTop = top;
     });
 
@@ -310,6 +311,7 @@
           closeAddList();
         }
       });
+      input.focus();
     }
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -318,47 +320,34 @@
       closeAddList();
       api.postMessage({ type: 'addList', entry: value });
     });
-    if (input) input.focus();
   }
 
   function openAddList() {
     addingList = true;
     addListDraft = '';
-    renderColumns();
+    renderLists();
   }
 
   function closeAddList() {
     if (!addingList) return;
     addingList = false;
     addListDraft = '';
-    renderColumns();
-  }
-
-  /** Reorders a list using the projected order, so no index math leaks into the core. */
-  function postMoveList(fromId, anchorId, side) {
-    const ids = realColumns().map((column) => column.id).filter((id) => id !== fromId);
-    const at = anchorId ? ids.indexOf(anchorId) : -1;
-    const index = anchorId ? (at === -1 ? null : side === 'after' ? at + 1 : at) : ids.length;
-    if (index === null) return;
-    const current = realColumns().findIndex((column) => column.id === fromId);
-    if (current === index) return;
-    api.postMessage({ type: 'moveList', columnId: fromId, index: index });
+    renderLists();
   }
 
   function renderPlaceholder() {
     const placeholder = document.getElementById('placeholder');
     if (!placeholder || !model) return;
-    if (model.view.columns.length > 0) {
-      placeholder.hidden = true;
-      document.getElementById('board').hidden = false;
-      return;
-    }
-    placeholder.hidden = false;
-    document.getElementById('board').hidden = true;
+    const hasLists = model.view.lists.length > 0;
+    placeholder.hidden = hasLists;
+    document.getElementById('board').hidden = !hasLists;
+    if (hasLists) return;
+
     placeholder.innerHTML = [
       '<div class="placeholder-inner">',
       '<h2>No lists configured</h2>',
-      '<p>Every <code>.md</code> file in <strong>' + esc(model.context.folderName) + '</strong> becomes a card. Add a list with <code>+ Add list</code> below, or edit the YAML.</p>',
+      '<p>Every <code>.md</code> file in <strong>' + esc(model.context.folderName) +
+        '</strong> becomes a card. Add a list with <code>+ Add list</code>, or edit the YAML.</p>',
       '</div>',
     ].join('');
   }
@@ -385,8 +374,7 @@
       return;
     }
 
-    const gapOpen = event.target.closest('[data-add-open]');
-    if (gapOpen) {
+    if (event.target.closest('[data-add-open]')) {
       event.stopPropagation();
       openAddList();
       return;
@@ -397,24 +385,24 @@
       return;
     }
 
-    const columnMenu = event.target.closest('[data-menu-column]');
-    if (columnMenu) {
+    const listMenuButton = event.target.closest('[data-menu-list]');
+    if (listMenuButton) {
       event.stopPropagation();
-      openColumnMenu(columnMenu, columnMenu.dataset.menuColumn);
+      openListMenu(listMenuButton, listMenuButton.dataset.menuList);
       return;
     }
 
     const removeButton = event.target.closest('[data-remove-list]');
     if (removeButton) {
       event.stopPropagation();
-      api.postMessage({ type: 'removeList', columnId: removeButton.dataset.removeList });
+      api.postMessage({ type: 'removeList', listId: removeButton.dataset.removeList });
       return;
     }
 
-    const menuButton = event.target.closest('[data-menu]');
-    if (menuButton) {
+    const cardMenuButton = event.target.closest('[data-menu]');
+    if (cardMenuButton) {
       event.stopPropagation();
-      openMenu(menuButton, menuButton.dataset.menu);
+      openCardMenu(cardMenuButton, cardMenuButton.dataset.menu);
       return;
     }
 
@@ -444,7 +432,7 @@
     if (event.key === 'm') {
       event.preventDefault();
       const button = card.querySelector('[data-menu]');
-      if (button) openMenu(button, card.dataset.card);
+      if (button) openCardMenu(button, card.dataset.card);
     }
   }
 
@@ -456,24 +444,26 @@
     render();
   }
 
+  // -------------------------------------------------------------- drag & drop
+
   function onDragStart(event) {
     if (!(event.target instanceof Element)) return;
 
-    const head = event.target.closest('.col-head[draggable="true"]');
+    const head = event.target.closest('.list-head[draggable="true"]');
     if (head) {
       dragListId = head.dataset.dragList;
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', 'list:' + dragListId);
-      const col = head.closest('.col');
-      if (col) col.classList.add('dragging-list');
+      const list = head.closest('.list');
+      if (list) list.classList.add('dragging-list');
       return;
     }
 
     const card = event.target.closest('.card');
     if (!card) return;
-    dragId = card.dataset.card;
+    dragCardId = card.dataset.card;
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', dragId);
+    event.dataTransfer.setData('text/plain', dragCardId);
     card.classList.add('dragging');
   }
 
@@ -482,18 +472,17 @@
       const card = event.target.closest('.card');
       if (card) card.classList.remove('dragging');
     }
-    document.querySelectorAll('.col.dragging-list').forEach((col) => col.classList.remove('dragging-list'));
-    dragId = null;
-    dragListId = null;
-    clearDropTargets();
     clearListDropTargets();
+    clearCardDropTargets();
+    dragCardId = null;
+    dragListId = null;
   }
 
   function onDragOver(event) {
     if (!(event.target instanceof Element)) return;
 
     if (dragListId) {
-      const slot = event.target.closest('.col-add-slot');
+      const slot = event.target.closest('.list-add-slot');
       if (slot) {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
@@ -501,23 +490,21 @@
         slot.classList.add('drop-target');
         return;
       }
-      const col = event.target.closest('.col');
-      if (col && col.dataset.column !== '__unassigned') {
+      const list = event.target.closest('.list');
+      if (list && list.dataset.list !== UNASSIGNED_LIST_ID) {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
-        const rect = col.getBoundingClientRect();
-        const before = event.clientX < rect.left + rect.width / 2;
-        clearListDropTargets(col);
-        col.classList.add(before ? 'drop-before' : 'drop-after');
+        clearListDropTargets(list);
+        list.classList.add(droppedBefore(event, list) ? 'drop-before' : 'drop-after');
       }
       return;
     }
 
-    const body = event.target.closest('.col-body');
+    const body = event.target.closest('.list-body');
     if (!body) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    clearDropTargets(body);
+    clearCardDropTargets(body);
     body.classList.add('drop-target');
   }
 
@@ -526,92 +513,112 @@
     const board = document.getElementById('board');
     if (board && event.relatedTarget instanceof Node && board.contains(event.relatedTarget)) return;
     clearListDropTargets();
-    if (event.target.closest('.col-body')) clearDropTargets();
+    clearCardDropTargets();
   }
 
   function onDrop(event) {
     if (!(event.target instanceof Element)) return;
 
     if (dragListId) {
-      const slot = event.target.closest('.col-add-slot');
-      const col = event.target.closest('.col');
-      const fromId = dragListId;
+      const movedId = dragListId;
+      const slot = event.target.closest('.list-add-slot');
+      const list = event.target.closest('.list');
       dragListId = null;
       event.preventDefault();
       clearListDropTargets();
-      document
-        .querySelectorAll('.col.dragging-list')
-        .forEach((element) => element.classList.remove('dragging-list'));
+      document.querySelectorAll('.list.dragging-list').forEach((el) => el.classList.remove('dragging-list'));
 
       if (slot) {
-        postMoveList(fromId, null, 'before');
+        postMoveList(movedId, null);
         return;
       }
-      if (col && col.dataset.column !== '__unassigned') {
-        const rect = col.getBoundingClientRect();
-        const side = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
-        postMoveList(fromId, col.dataset.column, side);
+      if (list && list.dataset.list !== UNASSIGNED_LIST_ID) {
+        const anchorId = list.dataset.list;
+        postMoveList(movedId, droppedBefore(event, list) ? anchorId : nextListId(anchorId, movedId));
       }
       return;
     }
 
-    const body = event.target.closest('.col-body');
+    const body = event.target.closest('.list-body');
     if (!body) return;
     event.preventDefault();
-    clearDropTargets();
-    const id = dragId || event.dataTransfer.getData('text/plain');
-    dragId = null;
-    if (!id) return;
-    const card = findCard(id);
-    const columnId = body.dataset.column;
-    if (!card || card.columnId === columnId) return;
-    optimisticMove(id, columnId);
-    api.postMessage({ type: 'moveCard', path: id, columnId: columnId });
+    clearCardDropTargets();
+    const cardId = dragCardId || event.dataTransfer.getData('text/plain');
+    dragCardId = null;
+    if (!cardId) return;
+    const card = findCard(cardId);
+    const listId = body.dataset.list;
+    if (!card || card.listId === listId) return;
+    optimisticMove(cardId, listId);
+    api.postMessage({ type: 'moveCard', path: cardId, listId: listId });
+  }
+
+  function droppedBefore(event, element) {
+    const rect = element.getBoundingClientRect();
+    return event.clientX < rect.left + rect.width / 2;
   }
 
   function clearListDropTargets(except) {
     document
-      .querySelectorAll('.col.drop-before, .col.drop-after, .col-add-slot.drop-target')
+      .querySelectorAll('.list.drop-before, .list.drop-after, .list-add-slot.drop-target')
       .forEach((element) => {
         if (element === except) return;
         element.classList.remove('drop-before', 'drop-after', 'drop-target');
       });
   }
 
-  function clearDropTargets(except) {
-    document.querySelectorAll('.col-body.drop-target').forEach((body) => {
+  function clearCardDropTargets(except) {
+    document.querySelectorAll('.list-body.drop-target').forEach((body) => {
       if (body !== except) body.classList.remove('drop-target');
     });
   }
 
-  function optimisticMove(cardId, columnId) {
-    const from = model.view.columns.find((column) => column.cards.some((card) => card.id === cardId));
-    const to = model.view.columns.find((column) => column.id === columnId);
+  function optimisticMove(cardId, listId) {
+    const from = model.view.lists.find((list) => list.cards.some((card) => card.id === cardId));
+    const to = model.view.lists.find((list) => list.id === listId);
     if (!from || !to) return;
     const index = from.cards.findIndex((card) => card.id === cardId);
     if (index === -1) return;
     const card = from.cards.splice(index, 1)[0];
-    card.columnId = columnId;
-    if (columnId === '__unassigned') card.statusTag = null;
-    else card.statusTag = to.tag;
+    card.listId = listId;
+    card.listTag = listId === UNASSIGNED_LIST_ID ? null : to.tag;
     to.cards.unshift(card);
     render();
   }
 
+  /** Final position of `movedId` when it is inserted before `beforeId` (or last). */
+  function projectedIndex(movedId, beforeId) {
+    const ids = boardLists().map((list) => list.id).filter((id) => id !== movedId);
+    return beforeId === null ? ids.length : ids.indexOf(beforeId);
+  }
+
+  function nextListId(listId, movedId) {
+    const ids = boardLists().map((list) => list.id).filter((id) => id !== movedId);
+    const index = ids.indexOf(listId);
+    return index === -1 || index === ids.length - 1 ? null : ids[index + 1];
+  }
+
+  function postMoveList(movedId, beforeId) {
+    const index = projectedIndex(movedId, beforeId);
+    if (index === -1) return;
+    if (boardLists().findIndex((list) => list.id === movedId) === index) return;
+    api.postMessage({ type: 'moveList', listId: movedId, index: index });
+  }
+
   // --------------------------------------------------------------------- menu
 
-  function openMenu(anchor, cardId) {
+  function openCardMenu(anchor, cardId) {
     const card = findCard(cardId);
     if (!card || !model) return;
 
     const items = [];
     for (const target of model.context.moveTargets) {
-      if (target.id === card.columnId) continue;
+      if (target.id === card.listId) continue;
       items.push({
         label: 'Move to ' + target.title,
         run: () => {
           optimisticMove(cardId, target.id);
-          api.postMessage({ type: 'moveCard', path: cardId, columnId: target.id });
+          api.postMessage({ type: 'moveCard', path: cardId, listId: target.id });
         },
       });
     }
@@ -622,38 +629,23 @@
     showMenu(anchor, items);
   }
 
-  function openColumnMenu(anchor, columnId) {
+  function openListMenu(anchor, listId) {
     if (!model) return;
-    const ids = realColumns().map((column) => column.id);
-    const at = ids.indexOf(columnId);
+    const ids = boardLists().map((list) => list.id);
+    const at = ids.indexOf(listId);
     if (at === -1) return;
 
     const items = [];
     if (at > 0) {
-      items.push({
-        label: 'Move left',
-        run: () => api.postMessage({ type: 'moveList', columnId: columnId, index: at - 1 }),
-      });
+      items.push({ label: 'Move left', run: () => api.postMessage({ type: 'moveList', listId: listId, index: at - 1 }) });
     }
     if (at < ids.length - 1) {
-      items.push({
-        label: 'Move right',
-        run: () => api.postMessage({ type: 'moveList', columnId: columnId, index: at + 1 }),
-      });
+      items.push({ label: 'Move right', run: () => api.postMessage({ type: 'moveList', listId: listId, index: at + 1 }) });
     }
-    items.push({
-      label: 'Add list before',
-      run: () => api.postMessage({ type: 'addList', index: at }),
-    });
-    items.push({
-      label: 'Add list after',
-      run: () => api.postMessage({ type: 'addList', index: at + 1 }),
-    });
+    items.push({ label: 'Add list before', run: () => api.postMessage({ type: 'addList', index: at }) });
+    items.push({ label: 'Add list after', run: () => api.postMessage({ type: 'addList', index: at + 1 }) });
     items.push({ separator: true });
-    items.push({
-      label: 'Remove list',
-      run: () => api.postMessage({ type: 'removeList', columnId: columnId }),
-    });
+    items.push({ label: 'Remove list', run: () => api.postMessage({ type: 'removeList', listId: listId }) });
     showMenu(anchor, items);
   }
 
@@ -705,11 +697,7 @@
   // ------------------------------------------------------------------ plumbing
 
   function persist() {
-    api.setState({
-      query: query,
-      tags: [...tagFilter],
-      boardFile: model ? model.context.boardFile : undefined,
-    });
+    api.setState({ query: query, tags: [...tagFilter] });
   }
 
   function restore() {
@@ -726,8 +714,6 @@
       model = data.state;
       busy = false;
       render();
-      // Remember the board file so VS Code can restore this panel after a reload.
-      persist();
     } else if (data.type === 'busy') {
       busy = Boolean(data.busy);
       setBusy(busy);

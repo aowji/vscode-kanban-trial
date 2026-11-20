@@ -4,36 +4,36 @@ import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import {
   buildBoardView,
-  formatColumnEntry,
-  resolveColumns,
-  UNASSIGNED_COLUMN_ID,
-  UNASSIGNED_COLUMN_TITLE,
-  type BoardCardInput,
+  resolveLists,
+  serializeList,
+  UNASSIGNED_LIST_ID,
+  UNASSIGNED_LIST_TITLE,
   type BoardView,
-  type ParsedColumn,
+  type CardInput,
+  type CardView,
+  type ParsedList,
 } from './core/board';
-import { scanWorkspace, toPosix } from './core/scan';
+import { scanDirectory, toPosixPath } from './core/scan';
 import {
   addBoardList,
   moveBoardList,
-  normalizeCardPath,
   readBoard,
   removeBoardList,
   setCardTags,
+  toCardKey,
   type StoreUpdate,
 } from './core/store';
-import { readConfig } from './config';
+import { CONFIG_SECTION, readConfig } from './config';
 import { log, logError } from './log';
 
 export const VIEW_TYPE = 'markdownKanban.board';
 const REFRESH_DEBOUNCE_MS = 250;
-const CONTEXT_KEY = 'markdownKanban.boardOpen';
 const PLAIN_EDITOR = 'default';
 
 export interface BoardState {
   view: BoardView;
   context: {
-    /** Absolute path of the board file; also used to restore the panel. */
+    /** Absolute path of the board file. */
     boardFile: string;
     boardFileName: string;
     folderName: string;
@@ -49,9 +49,9 @@ export interface BoardState {
 interface FromWebviewMessage {
   type?: string;
   path?: string;
-  columnId?: string | null;
+  listId?: string | null;
   entry?: string;
-  /** Insertion position for `addList`, and destination for `moveList`. */
+  /** Insert position for `addList`, and destination for `moveList`. */
   index?: number;
 }
 
@@ -61,10 +61,6 @@ interface FromWebviewMessage {
  * still be edited as YAML via "Reopen Editor With…".
  */
 export class KanbanEditorProvider implements vscode.CustomTextEditorProvider {
-  static readonly viewType = VIEW_TYPE;
-
-  private readonly editors = new Set<KanbanEditor>();
-
   constructor(private readonly extensionUri: vscode.Uri) {}
 
   /** Opens (or reveals) the board editor for a board file. */
@@ -82,25 +78,8 @@ export class KanbanEditorProvider implements vscode.CustomTextEditorProvider {
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): void {
-    const editor = new KanbanEditor(panel, this.extensionUri, document, () => {
-      this.editors.delete(editor);
-      void updateContext(this.editors.size > 0);
-    });
-    this.editors.add(editor);
-    void updateContext(true);
+    new KanbanEditor(panel, this.extensionUri, document);
     log(`board editor resolved for ${document.uri.fsPath}`);
-  }
-
-  refreshAll(): void {
-    for (const editor of this.editors) void editor.refresh();
-  }
-}
-
-async function updateContext(value: boolean): Promise<void> {
-  try {
-    await vscode.commands.executeCommand('setContext', CONTEXT_KEY, value);
-  } catch {
-    // Not fatal: the context key only controls command palette visibility.
   }
 }
 
@@ -118,7 +97,6 @@ class KanbanEditor {
     private readonly panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
     private readonly document: vscode.TextDocument,
-    private readonly onDispose: () => void,
   ) {
     this.boardDir = nodePath.dirname(document.uri.fsPath);
 
@@ -165,19 +143,22 @@ class KanbanEditor {
 
     vscode.workspace.onDidChangeConfiguration(
       (event) => {
-        if (event.affectsConfiguration('markdownKanban')) this.scheduleRefresh(0);
+        if (event.affectsConfiguration(CONFIG_SECTION)) this.scheduleRefresh(0);
       },
       undefined,
       this.disposables,
     );
-    vscode.workspace.onDidChangeWorkspaceFolders(() => this.scheduleRefresh(0), undefined, this.disposables);
+    vscode.workspace.onDidChangeWorkspaceFolders(
+      () => this.scheduleRefresh(0),
+      undefined,
+      this.disposables,
+    );
   }
 
   private dispose(): void {
     this.disposed = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     while (this.disposables.length > 0) this.disposables.pop()?.dispose();
-    this.onDispose();
     log(`board editor disposed (${this.document.uri.fsPath})`);
   }
 
@@ -190,7 +171,7 @@ class KanbanEditor {
     }, delay);
   }
 
-  async refresh(): Promise<void> {
+  private async refresh(): Promise<void> {
     if (this.disposed) return;
     if (this.refreshing) {
       this.refreshQueued = true;
@@ -222,31 +203,28 @@ class KanbanEditor {
 
   private async buildState(): Promise<BoardState> {
     const config = readConfig();
-    const store = readBoard(this.document.getText());
-    const columns: ParsedColumn[] = resolveColumns(store.lists, config.columns);
-    const scanned = await scanWorkspace(
-      [{ label: nodePath.basename(this.boardDir), dir: this.boardDir }],
-      {
-        ignoredDirs: config.ignoredDirs,
-        maxFiles: config.maxFiles,
-        readText: readTextPreferringOpenDocuments,
-      },
-    );
+    const board = readBoard(this.document.getText());
+    const lists: ParsedList[] = resolveLists(board.lists, config.lists);
+    const scanned = await scanDirectory(this.boardDir, {
+      excludeDirectories: config.excludeDirectories,
+      maxFiles: config.maxFiles,
+      readText: readTextPreferringOpenDocuments,
+    });
 
-    const cards: BoardCardInput[] = scanned.cards.map((card) => ({
+    const cards: CardInput[] = scanned.cards.map((card) => ({
       ...card,
-      tags: store.tags.get(normalizeCardPath(card.relPath)) ?? [],
+      tags: board.cardTags.get(toCardKey(card.relPath)) ?? [],
     }));
 
-    const known = new Set(scanned.cards.map((card) => normalizeCardPath(card.relPath)));
+    const known = new Set(scanned.cards.map((card) => toCardKey(card.relPath)));
     let staleEntries = 0;
-    for (const key of store.tags.keys()) {
+    for (const key of board.cardTags.keys()) {
       if (!known.has(key)) staleEntries += 1;
     }
 
     return {
       view: buildBoardView(cards, {
-        columns,
+        lists,
         sortBy: config.sortBy,
         showUnassigned: config.showUnassigned,
       }),
@@ -256,11 +234,11 @@ class KanbanEditor {
         folderName: nodePath.basename(this.boardDir) || this.boardDir,
         fileCount: scanned.fileCount,
         truncated: scanned.truncated,
-        storeError: store.error,
+        storeError: board.error,
         staleEntries,
         moveTargets: [
-          { id: UNASSIGNED_COLUMN_ID, title: UNASSIGNED_COLUMN_TITLE },
-          ...columns.map((column) => ({ id: column.id, title: column.title })),
+          { id: UNASSIGNED_LIST_ID, title: UNASSIGNED_LIST_TITLE },
+          ...lists.map((list) => ({ id: list.id, title: list.title })),
         ],
       },
     };
@@ -282,8 +260,8 @@ class KanbanEditor {
         if (message.path) await this.openCard(message.path);
         return;
       case 'moveCard':
-        if (message.path && typeof message.columnId === 'string') {
-          await this.moveCard(message.path, message.columnId);
+        if (message.path && typeof message.listId === 'string') {
+          await this.moveCard(message.path, message.listId);
         }
         return;
       case 'addList':
@@ -293,14 +271,12 @@ class KanbanEditor {
         );
         return;
       case 'moveList':
-        if (typeof message.columnId === 'string' && typeof message.index === 'number') {
-          await this.moveList(message.columnId, message.index);
+        if (typeof message.listId === 'string' && typeof message.index === 'number') {
+          await this.moveList(message.listId, message.index);
         }
         return;
       case 'removeList':
-        if (typeof message.columnId === 'string') {
-          await this.removeList(message.columnId);
-        }
+        if (typeof message.listId === 'string') await this.removeList(message.listId);
         return;
       case 'revealCard':
         if (message.path) {
@@ -309,7 +285,7 @@ class KanbanEditor {
         return;
       case 'copyPath':
         if (message.path) {
-          const card = this.findCard(message.path);
+          const card = this.findCardView(message.path);
           await vscode.env.clipboard.writeText(card?.path ?? message.path);
         }
         return;
@@ -318,9 +294,9 @@ class KanbanEditor {
     }
   }
 
-  private findCard(absPath: string) {
-    return this.lastState?.view.columns
-      .flatMap((column) => column.cards)
+  private findCardView(absPath: string): CardView | undefined {
+    return this.lastState?.view.lists
+      .flatMap((list) => list.cards)
       .find((card) => card.id === absPath);
   }
 
@@ -330,7 +306,7 @@ class KanbanEditor {
       const document = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(document, {
         preview: true,
-        viewColumn: this.targetColumn(uri),
+        viewColumn: this.targetViewColumn(uri),
       });
     } catch (error) {
       logError(`open ${absPath}`, error);
@@ -341,9 +317,9 @@ class KanbanEditor {
   /**
    * Picks one stable editor group. `ViewColumn.Beside` would resolve to "the group
    * right of the active one" and open a brand new group on every click, so the
-   * column next to the board is used instead and the document is revealed there.
+   * group next to the board is used instead and the document is revealed there.
    */
-  private targetColumn(uri: vscode.Uri): vscode.ViewColumn | undefined {
+  private targetViewColumn(uri: vscode.Uri): vscode.ViewColumn | undefined {
     if (readConfig().openMode === 'activeTab') return undefined;
 
     const wanted = normalizePath(uri.fsPath);
@@ -363,43 +339,44 @@ class KanbanEditor {
       }
     }
 
-    const board = this.panel.viewColumn;
-    if (!board || board < 1 || board >= vscode.ViewColumn.Nine) return vscode.ViewColumn.Beside;
-    return (board + 1) as vscode.ViewColumn;
+    const boardColumn = this.panel.viewColumn;
+    if (!boardColumn || boardColumn < 1 || boardColumn >= vscode.ViewColumn.Nine) {
+      return vscode.ViewColumn.Beside;
+    }
+    return (boardColumn + 1) as vscode.ViewColumn;
   }
 
   /** Only the board file is ever written; documents are opened read-only. */
-  private async moveCard(absPath: string, columnId: string): Promise<void> {
+  private async moveCard(absPath: string, listId: string): Promise<void> {
     const config = readConfig();
-    const relPath = toPosix(nodePath.relative(this.boardDir, absPath));
+    const relPath = toPosixPath(nodePath.relative(this.boardDir, absPath));
 
     try {
       const before = this.document.getText();
-      const parsed = readBoard(before);
-      const columns = resolveColumns(parsed.lists, config.columns);
+      const board = readBoard(before);
+      const lists = resolveLists(board.lists, config.lists);
 
-      const column = columns.find((entry) => entry.id === columnId);
-      const isUnassigned = columnId === UNASSIGNED_COLUMN_ID;
-      if (!column && !isUnassigned) {
-        void vscode.window.showErrorMessage(`Markdown Kanban: unknown column "${columnId}".`);
+      const list = lists.find((entry) => entry.id === listId);
+      const toUnassigned = listId === UNASSIGNED_LIST_ID;
+      if (!list && !toUnassigned) {
+        void vscode.window.showErrorMessage(`Markdown Kanban: unknown list "${listId}".`);
         return;
       }
 
-      const columnTags = new Set(columns.map((entry) => entry.tag.toLowerCase()));
-      const current = parsed.tags.get(normalizeCardPath(relPath)) ?? [];
-      const next = current.filter((tag) => !columnTags.has(tag.toLowerCase()));
-      if (column) next.push(column.tag);
+      const current = board.cardTags.get(toCardKey(relPath)) ?? [];
+      const listTags = new Set(lists.map((entry) => entry.tag.toLowerCase()));
+      const next = current.filter((tag) => !listTags.has(tag.toLowerCase()));
+      if (list) next.push(list.tag);
 
-      const sameSet =
+      const unchanged =
         next.length === current.length &&
-        current.every((tag) => next.some((candidate) => candidate.toLowerCase() === tag.toLowerCase()));
-      if (sameSet) return;
+        current.every((tag) => next.some((other) => other.toLowerCase() === tag.toLowerCase()));
+      if (unchanged) return;
 
-      const update = setCardTags(before, relPath, next);
-      if (!(await this.applyBoardUpdate(update))) return;
+      if (!(await this.applyBoardUpdate(setCardTags(before, relPath, next)))) return;
       await this.refresh();
     } catch (error) {
-      logError(`move ${relPath} -> ${columnId}`, error);
+      logError(`move ${relPath} -> ${listId}`, error);
       void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
       // The webview moved the card optimistically; put it back where it really is.
       await this.refresh();
@@ -421,11 +398,10 @@ class KanbanEditor {
       if (!entry) return;
     }
 
-    const config = readConfig();
     try {
       const update = addBoardList(this.document.getText(), entry, {
         index,
-        fallbackLists: config.columns.map(formatColumnEntry),
+        fallbackLists: readConfig().lists.map(serializeList),
       });
       if (!(await this.applyBoardUpdate(update))) return;
       await this.refresh();
@@ -435,31 +411,30 @@ class KanbanEditor {
     }
   }
 
-  private async moveList(columnId: string, index: number): Promise<void> {
-    if (columnId === UNASSIGNED_COLUMN_ID) return;
+  private async moveList(listId: string, index: number): Promise<void> {
+    if (listId === UNASSIGNED_LIST_ID) return;
     try {
-      const update = moveBoardList(this.document.getText(), columnId, index);
+      const update = moveBoardList(this.document.getText(), listId, index);
       if (!(await this.applyBoardUpdate(update))) return;
       await this.refresh();
     } catch (error) {
-      logError(`moveList ${columnId} -> ${index}`, error);
+      logError(`moveList ${listId} -> ${index}`, error);
       void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
     }
   }
 
-  private async removeList(columnId: string): Promise<void> {
-    if (columnId === UNASSIGNED_COLUMN_ID) return;
-    const config = readConfig();
+  private async removeList(listId: string): Promise<void> {
+    if (listId === UNASSIGNED_LIST_ID) return;
     try {
       const update = removeBoardList(
         this.document.getText(),
-        columnId,
-        config.columns.map(formatColumnEntry),
+        listId,
+        readConfig().lists.map(serializeList),
       );
       if (!(await this.applyBoardUpdate(update))) return;
       await this.refresh();
     } catch (error) {
-      logError(`removeList ${columnId}`, error);
+      logError(`removeList ${listId}`, error);
       void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
     }
   }

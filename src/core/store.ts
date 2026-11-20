@@ -1,5 +1,5 @@
 import { Document, YAMLMap, YAMLSeq, isMap, isSeq, parseDocument } from 'yaml';
-import { parseColumns } from './board';
+import { parseLists } from './board';
 
 export const BOARD_FILE_SUFFIXES = ['.kb.yaml', '.kb.yml'] as const;
 export const DEFAULT_BOARD_FILE_NAME = 'kanban.kb.yaml';
@@ -11,8 +11,8 @@ export function isBoardFile(filePath: string): boolean {
 }
 
 /** Card keys are POSIX paths relative to the board file's folder. */
-export function normalizeCardPath(value: string): string {
-  return value
+export function toCardKey(filePath: string): string {
+  return filePath
     .replace(/\\/g, '/')
     .replace(/^\.\/+/, '')
     .replace(/^\/+/, '');
@@ -35,8 +35,8 @@ export function normalizeTags(value: unknown): string[] {
 
 export interface BoardData {
   /** Card path -> tags. */
-  tags: Map<string, string[]>;
-  /** List definitions owned by this board, `undefined` when the file has none. */
+  cardTags: Map<string, string[]>;
+  /** Lists owned by this board, `undefined` when the file has no `lists` key. */
   lists?: string[];
   error?: string;
 }
@@ -46,32 +46,32 @@ export interface BoardData {
  * `tags: [a]`, `tags: "a, b"`, a bare list, or no value at all.
  */
 export function readBoard(text: string): BoardData {
-  const tags = new Map<string, string[]>();
-  if (!text.trim()) return { tags };
+  const cardTags = new Map<string, string[]>();
+  if (!text.trim()) return { cardTags };
 
   let doc;
   try {
     doc = parseDocument(text, { prettyErrors: false });
   } catch (error) {
-    return { tags, error: `Invalid board file: ${(error as Error).message}` };
+    return { cardTags, error: `Invalid board file: ${(error as Error).message}` };
   }
   if (doc.errors.length > 0) {
-    return { tags, error: `Invalid board file: ${doc.errors[0].message.split('\n')[0]}` };
+    return { cardTags, error: `Invalid board file: ${doc.errors[0].message.split('\n')[0]}` };
   }
 
   const data = doc.toJS();
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return { tags, error: 'The board file must be a YAML mapping.' };
+    return { cardTags, error: 'The board file must be a YAML mapping.' };
   }
 
   const lists = readLists((data as Record<string, unknown>).lists);
   const cards = (data as Record<string, unknown>).cards;
-  if (!cards || typeof cards !== 'object' || Array.isArray(cards)) return { tags, lists };
+  if (!cards || typeof cards !== 'object' || Array.isArray(cards)) return { cardTags, lists };
 
   for (const [key, value] of Object.entries(cards as Record<string, unknown>)) {
-    tags.set(normalizeCardPath(key), entryTags(value));
+    cardTags.set(toCardKey(key), entryTags(value));
   }
-  return { tags, lists };
+  return { cardTags, lists };
 }
 
 /** `lists: [todo, "in-progress:In Progress"]` or `- {tag: todo, title: Todo}`. */
@@ -79,17 +79,8 @@ function readLists(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const lists: string[] = [];
   for (const entry of value) {
-    if (typeof entry === 'string' || typeof entry === 'number') {
-      const text = String(entry).trim();
-      if (text) lists.push(text);
-      continue;
-    }
-    if (!entry || typeof entry !== 'object') continue;
-    const { tag, name, title } = entry as { tag?: unknown; name?: unknown; title?: unknown };
-    const tagText = typeof tag === 'string' ? tag.trim() : typeof name === 'string' ? name.trim() : '';
-    if (!tagText) continue;
-    const titleText = typeof title === 'string' ? title.trim() : '';
-    lists.push(titleText ? `${tagText}:${titleText}` : tagText);
+    const text = valueToListEntry(entry);
+    if (text) lists.push(text);
   }
   return lists;
 }
@@ -114,18 +105,9 @@ export interface StoreUpdate {
  * everything else, comments included, round-trips through the YAML document.
  */
 export function setCardTags(text: string, relPath: string, tags: string[]): StoreUpdate {
-  const key = normalizeCardPath(relPath);
-  const doc = text.trim() ? parseDocument(text) : new Document({});
-  if (doc.errors.length > 0) {
-    throw new Error(`Invalid board file: ${doc.errors[0].message.split('\n')[0]}`);
-  }
-  if (doc.contents !== null && !isMap(doc.contents)) {
-    throw new Error('The board file must be a YAML mapping.');
-  }
-
-  if (!doc.has('version')) doc.set('version', BOARD_VERSION);
-  // `set(key, {})` would store a plain object node, which `setIn` cannot descend into.
-  if (!isMap(doc.get('cards', true))) doc.set('cards', new YAMLMap());
+  const key = toCardKey(relPath);
+  const doc = parseBoardForWrite(text);
+  ensureBoardShape(doc);
 
   if (tags.length === 0) doc.deleteIn(['cards', key]);
   else doc.setIn(['cards', key], { tags });
@@ -135,9 +117,7 @@ export function setCardTags(text: string, relPath: string, tags: string[]): Stor
     if (node && typeof node === 'object' && 'flow' in node) node.flow = false;
   }
 
-  const next = toFileText(doc.toString({ lineWidth: 0 }));
-  if (next === text) return { text, start: 0, end: 0, newText: '', changed: false };
-  return { text: next, ...minimalEdit(text, next), changed: true };
+  return finishUpdate(doc, text);
 }
 
 export interface AddListOptions {
@@ -153,67 +133,45 @@ export function addBoardList(
   entry: string,
   options: AddListOptions = {},
 ): StoreUpdate {
-  const parsedEntry = parseColumns([entry])[0];
-  if (!parsedEntry) {
-    throw new Error('List name cannot be empty.');
-  }
+  const parsed = parseLists([entry])[0];
+  if (!parsed) throw new Error('List name cannot be empty.');
 
   const doc = parseBoardForWrite(text);
-  if (!doc.has('version')) doc.set('version', BOARD_VERSION);
   const seq = ensureListsSeq(doc, options.fallbackLists ?? []);
-
-  const existing = parseColumns(seqToStrings(seq));
-  if (existing.some((col) => col.id === parsedEntry.id)) {
-    throw new Error(`List "${parsedEntry.tag}" already exists.`);
+  const existing = seq.items.map(nodeToListEntry).filter((entry): entry is string => !!entry);
+  if (parseLists(existing).some((list) => list.id === parsed.id)) {
+    throw new Error(`List "${parsed.tag}" already exists.`);
   }
 
-  const node = doc.createNode(entry.trim());
-  const index = clampIndex(options.index, seq.items.length);
-  seq.items.splice(index, 0, node);
+  seq.items.splice(clampIndex(options.index, seq.items.length), 0, doc.createNode(entry.trim()));
   seq.flow = false;
-  if (!isMap(doc.get('cards', true))) doc.set('cards', new YAMLMap());
-
-  const next = toFileText(doc.toString({ lineWidth: 0 }));
-  if (next === text) return { text, start: 0, end: 0, newText: '', changed: false };
-  return { text: next, ...minimalEdit(text, next), changed: true };
+  ensureBoardShape(doc);
+  return finishUpdate(doc, text);
 }
 
 /**
- * Reorders a list to `toIndex`, the final 0-based position in `lists:`.
+ * Reorders a list to `toIndex`, its final 0-based position in `lists:`.
  * Cards are untouched: only the order of the columns changes.
  */
-export function moveBoardList(
-  text: string,
-  columnId: string,
-  toIndex: number,
-): StoreUpdate {
-  const targetId = columnId.trim().toLowerCase();
+export function moveBoardList(text: string, listId: string, toIndex: number): StoreUpdate {
+  const targetId = listId.trim().toLowerCase();
   const doc = parseBoardForWrite(text);
-  const existing = doc.get('lists', true);
-  if (!isSeq(existing)) return { text, start: 0, end: 0, newText: '', changed: false };
+  const seq = doc.get('lists', true);
+  if (!isSeq(seq)) return unchanged(text);
 
-  const from = existing.items.findIndex((item) => {
-    const raw = itemToString(item);
-    const col = raw ? parseColumns([raw])[0] : undefined;
-    return col?.id === targetId;
+  const from = seq.items.findIndex((item) => {
+    const entry = nodeToListEntry(item);
+    return entry ? parseLists([entry])[0]?.id === targetId : false;
   });
-  if (from === -1) return { text, start: 0, end: 0, newText: '', changed: false };
+  if (from === -1) return unchanged(text);
 
-  const to = clampIndex(toIndex, existing.items.length - 1);
-  if (to === from) return { text, start: 0, end: 0, newText: '', changed: false };
+  const to = clampIndex(toIndex, seq.items.length - 1);
+  if (to === from) return unchanged(text);
 
-  const [node] = existing.items.splice(from, 1);
-  existing.items.splice(to, 0, node);
-  if (!isMap(doc.get('cards', true))) doc.set('cards', new YAMLMap());
-
-  const next = toFileText(doc.toString({ lineWidth: 0 }));
-  if (next === text) return { text, start: 0, end: 0, newText: '', changed: false };
-  return { text: next, ...minimalEdit(text, next), changed: true };
-}
-
-function clampIndex(value: number | undefined, max: number): number {
-  if (value === undefined || !Number.isFinite(value)) return max;
-  return Math.min(Math.max(Math.trunc(value), 0), max);
+  const [node] = seq.items.splice(from, 1);
+  seq.items.splice(to, 0, node);
+  ensureBoardShape(doc);
+  return finishUpdate(doc, text);
 }
 
 /**
@@ -223,31 +181,30 @@ function clampIndex(value: number | undefined, max: number): number {
  */
 export function removeBoardList(
   text: string,
-  columnId: string,
+  listId: string,
   fallbackLists: readonly string[] = [],
 ): StoreUpdate {
-  const targetId = columnId.trim().toLowerCase();
+  const targetId = listId.trim().toLowerCase();
   const doc = parseBoardForWrite(text);
-  if (!doc.has('version')) doc.set('version', BOARD_VERSION);
   const seq = ensureListsSeq(doc, fallbackLists);
 
   let removed = false;
   for (let i = seq.items.length - 1; i >= 0; i -= 1) {
-    const raw = itemToString(seq.items[i]);
-    const col = raw ? parseColumns([raw])[0] : undefined;
-    if (col && col.id === targetId) {
+    const entry = nodeToListEntry(seq.items[i]);
+    if (entry && parseLists([entry])[0]?.id === targetId) {
       seq.items.splice(i, 1);
       removed = true;
     }
   }
-  if (!removed) return { text, start: 0, end: 0, newText: '', changed: false };
+  if (!removed) return unchanged(text);
 
   seq.flow = seq.items.length === 0;
-  if (!isMap(doc.get('cards', true))) doc.set('cards', new YAMLMap());
+  ensureBoardShape(doc);
+  return finishUpdate(doc, text);
+}
 
-  const next = toFileText(doc.toString({ lineWidth: 0 }));
-  if (next === text) return { text, start: 0, end: 0, newText: '', changed: false };
-  return { text: next, ...minimalEdit(text, next), changed: true };
+function unchanged(text: string): StoreUpdate {
+  return { text, start: 0, end: 0, newText: '', changed: false };
 }
 
 function parseBoardForWrite(text: string): Document {
@@ -261,6 +218,12 @@ function parseBoardForWrite(text: string): Document {
   return doc;
 }
 
+function ensureBoardShape(doc: Document): void {
+  if (!doc.has('version')) doc.set('version', BOARD_VERSION);
+  // `set(key, {})` stores a plain object node, which `setIn` cannot descend into.
+  if (!isMap(doc.get('cards', true))) doc.set('cards', new YAMLMap());
+}
+
 function ensureListsSeq(doc: Document, fallbackLists: readonly string[]): YAMLSeq {
   const existing = doc.get('lists', true);
   if (isSeq(existing)) return existing;
@@ -271,31 +234,37 @@ function ensureListsSeq(doc: Document, fallbackLists: readonly string[]): YAMLSe
   return seq;
 }
 
-function seqToStrings(seq: YAMLSeq): string[] {
-  const out: string[] = [];
-  for (const item of seq.items) {
-    const s = itemToString(item);
-    if (s) out.push(s);
-  }
-  return out;
+function clampIndex(value: number | undefined, max: number): number {
+  if (value === undefined || !Number.isFinite(value)) return max;
+  return Math.min(Math.max(Math.trunc(value), 0), max);
 }
 
-function itemToString(item: unknown): string | undefined {
-  if (!item || typeof item !== 'object') return undefined;
-  const node = item as { toJSON?: () => unknown; value?: unknown };
-  const val = typeof node.toJSON === 'function' ? node.toJSON() : node.value;
-  if (typeof val === 'string' || typeof val === 'number') {
-    const text = String(val).trim();
-    return text || undefined;
+function finishUpdate(doc: Document, before: string): StoreUpdate {
+  const text = toFileText(doc.toString({ lineWidth: 0 }));
+  if (text === before) return unchanged(before);
+  return { text, ...minimalEdit(before, text), changed: true };
+}
+
+/** YAML node for a list entry; `{tag, title}` objects are accepted too. */
+function nodeToListEntry(node: unknown): string | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  const typed = node as { toJSON?: () => unknown; value?: unknown };
+  const value = typeof typed.toJSON === 'function' ? typed.toJSON() : typed.value;
+  return valueToListEntry(value);
+}
+
+/** Plain value for a list entry; shared by file reads and YAML node reads. */
+function valueToListEntry(value: unknown): string | undefined {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value).trim() || undefined;
   }
-  if (val && typeof val === 'object') {
-    const { tag, name, title } = val as { tag?: unknown; name?: unknown; title?: unknown };
-    const tagText = typeof tag === 'string' ? tag.trim() : typeof name === 'string' ? name.trim() : '';
-    if (!tagText) return undefined;
-    const titleText = typeof title === 'string' ? title.trim() : '';
-    return titleText ? `${tagText}:${titleText}` : tagText;
-  }
-  return undefined;
+  if (!value || typeof value !== 'object') return undefined;
+
+  const { tag, name, title } = value as { tag?: unknown; name?: unknown; title?: unknown };
+  const tagText = typeof tag === 'string' ? tag.trim() : typeof name === 'string' ? name.trim() : '';
+  if (!tagText) return undefined;
+  const titleText = typeof title === 'string' ? title.trim() : '';
+  return titleText ? `${tagText}:${titleText}` : tagText;
 }
 
 function toFileText(value: string): string {
@@ -304,7 +273,10 @@ function toFileText(value: string): string {
 }
 
 /** Narrows a whole-file replacement down to the region that actually changed. */
-export function minimalEdit(before: string, after: string): { start: number; end: number; newText: string } {
+export function minimalEdit(
+  before: string,
+  after: string,
+): { start: number; end: number; newText: string } {
   const max = Math.min(before.length, after.length);
   let prefix = 0;
   while (prefix < max && before[prefix] === after[prefix]) prefix += 1;

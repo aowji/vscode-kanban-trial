@@ -1,35 +1,32 @@
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { formatColumnEntry } from './core/board';
+import { serializeList } from './core/board';
 import { DEFAULT_BOARD_FILE_NAME, boardFileTemplate, isBoardFile } from './core/store';
 import { KanbanEditorProvider, VIEW_TYPE } from './editor';
 import { readConfig } from './config';
 import { disposeLog, log, logError } from './log';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const provider = new KanbanEditorProvider(context.extensionUri);
-
   try {
     context.subscriptions.push(
       { dispose: disposeLog },
-      vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
-        webviewOptions: { retainContextWhenHidden: true },
-        supportsMultipleEditorsPerDocument: false,
-      }),
+      vscode.window.registerCustomEditorProvider(
+        VIEW_TYPE,
+        new KanbanEditorProvider(context.extensionUri),
+        {
+          webviewOptions: { retainContextWhenHidden: true },
+          supportsMultipleEditorsPerDocument: false,
+        },
+      ),
       vscode.commands.registerCommand('markdownKanban.openBoard', () => openBoard()),
       vscode.commands.registerCommand('markdownKanban.openAsText', () => openActiveAsText()),
       vscode.commands.registerCommand('markdownKanban.createBoardFile', () => createBoardFile()),
-      vscode.commands.registerCommand('markdownKanban.refreshBoard', () => provider.refreshAll()),
     );
     log('activated');
   } catch (error) {
     logError('activate', error);
     throw error;
   }
-}
-
-export function deactivate(): void {
-  // Editors are disposed by VS Code with their webview panels.
 }
 
 /** Opens the board editor for the active `*.kb.yaml`, or the single one in the workspace. */
@@ -57,8 +54,7 @@ async function resolveBoardFile(): Promise<vscode.Uri | undefined> {
     return active.document.uri;
   }
 
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  for (const folder of folders) {
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const found = await vscode.workspace.findFiles(
       new vscode.RelativePattern(folder, '*.kb.{yaml,yml}'),
       '**/node_modules/**',
@@ -67,7 +63,11 @@ async function resolveBoardFile(): Promise<vscode.Uri | undefined> {
     if (found.length === 1) return found[0];
     if (found.length > 1) {
       const picked = await vscode.window.showQuickPick(
-        found.map((uri) => ({ label: nodePath.basename(uri.fsPath), description: uri.fsPath, uri })),
+        found.map((uri) => ({
+          label: nodePath.basename(uri.fsPath),
+          description: uri.fsPath,
+          uri,
+        })),
         { title: 'Which board file?' },
       );
       return picked?.uri;
@@ -97,7 +97,7 @@ async function createBoardFile(): Promise<void> {
   try {
     await vscode.workspace.fs.stat(uri);
   } catch {
-    const lists = readConfig().columns.map(formatColumnEntry);
+    const lists = readConfig().lists.map(serializeList);
     await vscode.workspace.fs.writeFile(uri, Buffer.from(boardFileTemplate(lists), 'utf8'));
     log(`created ${uri.fsPath}`);
   }

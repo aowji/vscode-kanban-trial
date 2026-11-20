@@ -12,7 +12,7 @@
 - 列由看板文件里的 `lists:` 决定；**默认只有 `No status` 一列**，其它 list 可在 `*.kb.yaml` 里写，也可以直接在看板界面增删：
   - 最右端 `+ Add list` 追加新列
   - 拖拽列头左右移动即可重排顺序（顺序错了不用删了重加）
-  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before`（在该列前面插入）/ `Add list after`（在该列后面插入）/ `Remove list`，插入时弹出输入框
+  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Remove list`，插入时弹出输入框
 - 没有列 tag 的文档进入最左侧的 “No status” 列；删除 list 不会丢失卡片原有 tag，卡片会自动回到 “No status”
 - **拖拽卡片换列**，或点卡片右上角的 `⋮` 菜单换列（键盘可用）
 - 换列只改 `*.kb.yaml`，Markdown 文档一个字节都不动
@@ -69,7 +69,7 @@ cards:
       - done
 ```
 
-- `lists:` 定义这个看板自己的列与列序；支持 `tag:显示名` 改名。不写或为空时，退回设置里的 `markdownKanban.columns`
+- `lists:` 定义这个看板自己的列与列序；支持 `tag:显示名` 改名。不写（缺 `lists` 键）时退回设置里的 `markdownKanban.defaultLists`；显式写 `lists: []` 则是"只有 No status"
 - key 是相对看板文件所在目录的 POSIX 路径；拖动卡片只会重写对应的这一条（注释、其它条目、`lists` 原样保留）
 - 列 tag 取 `lists` 里的那几个；一张卡片只会落在一列
 - 其余 tag 会作为 chip 显示在卡片上，不参与分列
@@ -82,7 +82,7 @@ cards:
 
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `markdownKanban.columns` | `[]` | 新建看板文件时写入的默认列表；看板文件没定义 `lists:` 键时的回退值。默认为空（仅保留 `No status`）。支持 `tag:显示名` |
+| `markdownKanban.defaultLists` | `[]` | 新建看板文件时写入的默认列表；看板文件没有 `lists` 键时的回退值。默认为空（仅保留 `No status`）。支持 `tag:显示名` |
 | `markdownKanban.excludeDirectories` | `node_modules`, `.git`, `dist` … | 不扫描的目录名 |
 | `markdownKanban.sortBy` | `updated` | 列内排序：`updated` 或 `title` |
 | `markdownKanban.showUnassigned` | `true` | 是否显示 “No status” 列 |
@@ -110,7 +110,7 @@ cards:
 npm run compile   # 打包 dist/extension.js
 npm run watch     # 监听编译
 npm run typecheck # tsc 类型检查
-npm test          # 51 个测试：front matter 读取 / 看板文件读写 / list 插入·重排·删除 / 分列 / 扫描 / 自定义编辑器集成
+npm test          # 53 个测试：front matter 读取 / 看板文件读写 / list 插入·重排·删除 / 分列 / 扫描 / 自定义编辑器集成
 ```
 
 ### 启动调试宿主（F5）
@@ -129,8 +129,8 @@ npm test          # 51 个测试：front matter 读取 / 看板文件读写 / li
 4. 彻底绕开调试器：`code --extensionDevelopmentPath="D:\vscode-kanban-trial" --new-window` 起一个普通实例，
    配合 `npm run watch` + 在该窗口按 `Ctrl+R` 重载即可迭代。
 
-- [src/core/](src/core) 是不依赖 `vscode` 的纯逻辑（front matter 读取、看板文件读写、分列、扫描），单测覆盖
-- [src/editor.ts](src/editor.ts) 是看板的自定义编辑器（`CustomTextEditorProvider`）、命令和看板文件写回
+- [src/core/](src/core) 是不依赖 `vscode` 的纯逻辑（front matter 读取、看板文件读写、list 解析、扫描），单测覆盖
+- [src/editor.ts](src/editor.ts) 是看板的自定义编辑器（`CustomTextEditorProvider`）与看板文件写回
 - [media/](media) 是 webview 的前端（原生 JS + CSS，无构建步骤）
 - [test/preview/preview.html](test/preview/preview.html) 是纯浏览器预览页，用假数据渲染看板，方便调 UI
 

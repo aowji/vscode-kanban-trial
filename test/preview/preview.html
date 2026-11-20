@@ -53,14 +53,14 @@
       const now = Date.now();
       const minutes = (n) => now - n * 60000;
 
-      function card(id, title, summary, tags, statusTag, columnId, updated, error) {
+      function card(id, title, summary, extraTags, listTag, listId, updated, error) {
         return {
           id,
           title,
           path: id.replace(/^.*?\/workspace\//, ''),
-          tags,
-          statusTag,
-          columnId,
+          extraTags,
+          listTag,
+          listId,
           summary,
           updated,
           error,
@@ -70,7 +70,7 @@
       const sample = {
         view: {
           totalCards: 11,
-          columns: [
+          lists: [
             {
               id: '__unassigned',
               title: 'No status',

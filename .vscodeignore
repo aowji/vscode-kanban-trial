@@ -2,7 +2,6 @@
 .github/**
 src/**
 test/**
-scripts/**
 esbuild.mjs
 tsconfig.json
 .gitignore

@@ -1,7 +1,8 @@
 import type { ScannedCard } from './scan';
 
-export interface ParsedColumn {
-  /** Lower-cased tag, stable identity used by the webview. */
+/** One board list (a column), defined by the `lists:` entry in the board file. */
+export interface ParsedList {
+  /** Lower-cased tag; stable identity shared with the webview. */
   id: string;
   /** Tag as written in the board file. */
   tag: string;
@@ -9,7 +10,7 @@ export interface ParsedColumn {
 }
 
 /** A scanned document plus the tags stored for it in the board file. */
-export interface BoardCardInput extends ScannedCard {
+export interface CardInput extends ScannedCard {
   tags: string[];
 }
 
@@ -17,29 +18,31 @@ export interface CardView {
   id: string;
   title: string;
   path: string;
-  /** Tags other than the column tag. */
-  tags: string[];
-  statusTag: string | null;
-  columnId: string;
+  /** Tags other than the one that decides the list. */
+  extraTags: string[];
+  /** Tag that put the card in its list, `null` when it has none. */
+  listTag: string | null;
+  listId: string;
   summary: string;
   updated: number;
   error?: string;
 }
 
-export interface ColumnView {
+export interface ListView {
   id: string;
   title: string;
+  /** `null` for the "No status" bucket, which owns no tag. */
   tag: string | null;
   cards: CardView[];
 }
 
 export interface BoardView {
-  columns: ColumnView[];
+  lists: ListView[];
   totalCards: number;
 }
 
-export const UNASSIGNED_COLUMN_ID = '__unassigned';
-export const UNASSIGNED_COLUMN_TITLE = 'No status';
+export const UNASSIGNED_LIST_ID = '__unassigned';
+export const UNASSIGNED_LIST_TITLE = 'No status';
 
 /** `in-progress` -> `In Progress`, `TODO` -> `TODO`. */
 export function titleForTag(tag: string): string {
@@ -54,8 +57,8 @@ export function titleForTag(tag: string): string {
 }
 
 /** Accepts `tag` or `tag:Display Title` entries. */
-export function parseColumns(raw: readonly string[] | undefined): ParsedColumn[] {
-  const columns: ParsedColumn[] = [];
+export function parseLists(raw: readonly string[] | undefined): ParsedList[] {
+  const lists: ParsedList[] = [];
   const seen = new Set<string>();
   for (const entry of raw ?? []) {
     if (typeof entry !== 'string') continue;
@@ -68,87 +71,100 @@ export function parseColumns(raw: readonly string[] | undefined): ParsedColumn[]
     if (seen.has(id)) continue;
     seen.add(id);
     const customTitle = separator === -1 ? '' : trimmed.slice(separator + 1).trim();
-    columns.push({ id, tag, title: customTitle || titleForTag(tag) });
+    lists.push({ id, tag, title: customTitle || titleForTag(tag) });
   }
-  return columns;
+  return lists;
 }
 
-/** `tag`, or `tag:Display Title` when the title is not just the prettified tag. */
-export function formatColumnEntry(column: ParsedColumn): string {
-  return column.title === titleForTag(column.tag) ? column.tag : `${column.tag}:${column.title}`;
+/** Inverse of {@link parseLists}: `tag`, or `tag:Display Title` when renamed. */
+export function serializeList(list: ParsedList): string {
+  return list.title === titleForTag(list.tag) ? list.tag : `${list.tag}:${list.title}`;
 }
 
 /**
  * The board file owns its own lists; the workspace setting is only the fallback
  * when the board file does not define a `lists` key at all.
  */
-export function resolveColumns(
+export function resolveLists(
   fromBoard: readonly string[] | undefined,
-  fallback: readonly ParsedColumn[],
-): ParsedColumn[] {
-  return fromBoard !== undefined ? parseColumns(fromBoard) : [...fallback];
+  fallback: readonly ParsedList[],
+): ParsedList[] {
+  return fromBoard !== undefined ? parseLists(fromBoard) : [...fallback];
 }
 
-/** The first tag that belongs to a column, or `null` when there is none. */
-export function statusTagOf(tags: readonly string[], columns: readonly ParsedColumn[]): string | null {
-  const byId = new Map(columns.map((column) => [column.id, column.tag]));
+function indexLists(lists: readonly ParsedList[]): Map<string, ParsedList> {
+  return new Map(lists.map((list) => [list.id, list]));
+}
+
+function firstListOf(
+  tags: readonly string[],
+  index: Map<string, ParsedList>,
+): ParsedList | undefined {
   for (const tag of tags) {
-    const hit = byId.get(tag.toLowerCase());
+    const hit = index.get(tag.toLowerCase());
     if (hit) return hit;
   }
-  return null;
+  return undefined;
+}
+
+/** The list that owns the first matching tag, or `undefined` when there is none. */
+export function findList(
+  tags: readonly string[],
+  lists: readonly ParsedList[],
+): ParsedList | undefined {
+  return firstListOf(tags, indexLists(lists));
 }
 
 export interface BuildBoardOptions {
-  columns: readonly ParsedColumn[];
+  lists: readonly ParsedList[];
   sortBy?: 'updated' | 'title';
   showUnassigned?: boolean;
 }
 
 export function buildBoardView(
-  cards: readonly BoardCardInput[],
+  cards: readonly CardInput[],
   options: BuildBoardOptions,
 ): BoardView {
-  const { columns, sortBy = 'updated', showUnassigned = true } = options;
-  const buckets = new Map<string, CardView[]>(columns.map((column) => [column.id, []]));
+  const { lists, sortBy = 'updated', showUnassigned = true } = options;
+  const index = indexLists(lists);
+  const buckets = new Map<string, CardView[]>(lists.map((list) => [list.id, []]));
   const unassigned: CardView[] = [];
 
   for (const card of cards) {
-    const statusTag = statusTagOf(card.tags, columns);
-    const columnId = statusTag ? columns.find((column) => column.id === statusTag.toLowerCase())!.id : UNASSIGNED_COLUMN_ID;
+    const list = firstListOf(card.tags, index);
     const view: CardView = {
       id: card.absPath,
       title: card.title,
       path: card.relPath,
-      tags: card.tags.filter((tag) => tag.toLowerCase() !== statusTag?.toLowerCase()),
-      statusTag,
-      columnId,
+      extraTags: card.tags.filter((tag) => tag.toLowerCase() !== list?.tag.toLowerCase()),
+      listTag: list?.tag ?? null,
+      listId: list?.id ?? UNASSIGNED_LIST_ID,
       summary: card.summary,
       updated: card.updated,
       error: card.error,
     };
-    (buckets.get(columnId) ?? unassigned).push(view);
+    (list ? buckets.get(list.id)! : unassigned).push(view);
   }
 
-  const views: ColumnView[] = [];
+  const views: ListView[] = [];
   if (showUnassigned) {
     views.push({
-      id: UNASSIGNED_COLUMN_ID,
-      title: UNASSIGNED_COLUMN_TITLE,
+      id: UNASSIGNED_LIST_ID,
+      title: UNASSIGNED_LIST_TITLE,
       tag: null,
       cards: sortCards(unassigned, sortBy),
     });
   }
-  for (const column of columns) {
+  for (const list of lists) {
     views.push({
-      id: column.id,
-      title: column.title,
-      tag: column.tag,
-      cards: sortCards(buckets.get(column.id) ?? [], sortBy),
+      id: list.id,
+      title: list.title,
+      tag: list.tag,
+      cards: sortCards(buckets.get(list.id) ?? [], sortBy),
     });
   }
 
-  return { columns: views, totalCards: cards.length };
+  return { lists: views, totalCards: cards.length };
 }
 
 function sortCards(cards: CardView[], sortBy: 'updated' | 'title'): CardView[] {

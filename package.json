@@ -1,7 +1,7 @@
 {
   "name": "markdown-kanban",
   "displayName": "Markdown Kanban",
-  "description": "Collect the Markdown files in your workspace and show them as a GitLab-style issue board. Column membership is stored in each file's front matter.",
+  "description": "Show the Markdown files of a folder as a GitLab-style issue board. Card status lives in a *.kb.yaml board file, so your documents are never modified.",
   "version": "0.1.0",
   "license": "MIT",
   "publisher": "markdown-kanban",
@@ -16,7 +16,8 @@
     "markdown",
     "kanban",
     "board",
-    "frontmatter",
+    "yaml",
+    "custom-editor",
     "issues"
   ],
   "main": "./dist/extension.js",
@@ -24,7 +25,6 @@
     "onCommand:markdownKanban.openBoard",
     "onCommand:markdownKanban.openAsText",
     "onCommand:markdownKanban.createBoardFile",
-    "onCommand:markdownKanban.refreshBoard",
     "onCustomEditor:markdownKanban.board"
   ],
   "contributes": {
@@ -57,12 +57,6 @@
         "icon": "$(go-to-file)"
       },
       {
-        "command": "markdownKanban.refreshBoard",
-        "title": "Refresh Board",
-        "category": "Markdown Kanban",
-        "icon": "$(refresh)"
-      },
-      {
         "command": "markdownKanban.createBoardFile",
         "title": "Create Board File",
         "category": "Markdown Kanban",
@@ -92,23 +86,19 @@
         },
         {
           "command": "markdownKanban.createBoardFile"
-        },
-        {
-          "command": "markdownKanban.refreshBoard",
-          "when": "markdownKanban.boardOpen"
         }
       ]
     },
     "configuration": {
       "title": "Markdown Kanban",
       "properties": {
-        "markdownKanban.columns": {
+        "markdownKanban.defaultLists": {
           "type": "array",
           "items": {
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Default lists for new board files, and fallback when a board file has no `lists` key. Empty by default so new boards start with only the No status list. Use `tag:Display Title` to customise a column header (e.g. `in-progress:In Progress`)."
+          "markdownDescription": "Lists written into a new board file, and used as the fallback when a board file has no `lists` key. Empty by default, so a new board only shows the No status list. Use `tag:Display Title` to rename a list header (e.g. `in-progress:In Progress`)."
         },
         "markdownKanban.excludeDirectories": {
           "type": "array",
@@ -143,12 +133,12 @@
             "title"
           ],
           "default": "updated",
-          "description": "How cards are ordered inside a column."
+          "description": "How cards are ordered inside a list."
         },
         "markdownKanban.showUnassigned": {
           "type": "boolean",
           "default": true,
-          "description": "Show a leading column for documents that carry no column tag."
+          "description": "Show a leading list for documents that carry no list tag."
         },
         "markdownKanban.openMode": {
           "type": "string",

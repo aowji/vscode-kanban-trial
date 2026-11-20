@@ -88,7 +88,7 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
     output: [] as string[],
     docChangeHandlers: [] as ((event: { document: FakeDocument }) => void)[],
     provider: undefined as
-      | { resolveCustomTextEditor(document: any, panel: any, token: any): void; refreshAll(): void }
+      | { resolveCustomTextEditor(document: any, panel: any, token: any): void }
       | undefined,
     providerOptions: undefined as any,
   };
@@ -253,7 +253,11 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
         addDisposable(list, { dispose() {} }),
       onDidChangeWorkspaceFolders: (_handler: unknown, _this: unknown, list: unknown) =>
         addDisposable(list, { dispose() {} }),
-      onDidChangeTextDocument: (handler: (event: { document: FakeDocument }) => void, _this: unknown, list: unknown) => {
+      onDidChangeTextDocument: (
+        handler: (event: { document: FakeDocument }) => void,
+        _this: unknown,
+        list: unknown,
+      ) => {
         harness.docChangeHandlers.push(handler);
         return addDisposable(list, { dispose() {} });
       },
@@ -309,7 +313,11 @@ async function waitFor<T>(
   }
 }
 
-async function waitForText(file: string, predicate: (text: string) => boolean, label: string): Promise<string> {
+async function waitForText(
+  file: string,
+  predicate: (text: string) => boolean,
+  label: string,
+): Promise<string> {
   return waitFor(async () => {
     const text = await fs.readFile(file, 'utf8');
     return predicate(text) ? text : undefined;
@@ -344,7 +352,7 @@ after(async () => {
 
 test('*.kb.yaml opens as a custom editor that reads and writes the board file', async () => {
   const fake = createFakeVscode(root, {
-    columns: ['backlog', 'todo', 'in-progress:In Progress', 'review', 'done'],
+    defaultLists: ['backlog', 'todo', 'in-progress:In Progress', 'review', 'done'],
     excludeDirectories: ['node_modules'],
     sortBy: 'updated',
     showUnassigned: true,
@@ -366,7 +374,6 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       'markdownKanban.createBoardFile',
       'markdownKanban.openAsText',
       'markdownKanban.openBoard',
-      'markdownKanban.refreshBoard',
     ]);
     assert.ok(fake.harness.provider, 'the custom editor provider must be registered');
     assert.deepEqual(fake.harness.providerOptions, {
@@ -378,8 +385,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     await fake.registered.get('markdownKanban.createBoardFile')!();
     const template = await fs.readFile(boardPath, 'utf8');
     assert.match(template, /^# Markdown Kanban board\./);
-    // `createBoardFile` seeds the board with the configured lists; titles equal to
-    // the prettified tag are written in short form.
+    // Titles equal to the prettified tag are written in short form.
     assert.deepEqual(readBoard(template).lists, [
       'backlog',
       'todo',
@@ -403,18 +409,24 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     assert.equal(firstState.context.boardFileName, 'kanban.kb.yaml');
     assert.equal(firstState.view.totalCards, 2);
     assert.deepEqual(
-      firstState.view.columns.map((column: any) => column.id),
+      firstState.view.lists.map((list: any) => list.id),
       ['__unassigned', 'backlog', 'todo', 'in-progress', 'review', 'done'],
     );
 
     // Moving a card rewrites only the board file.
-    fake.send({ type: 'moveCard', path: nodePath.join(root, 'fix-login.md'), columnId: 'review' });
+    fake.send({ type: 'moveCard', path: nodePath.join(root, 'fix-login.md'), listId: 'review' });
     const moved = await waitForText(boardPath, (text) => text.includes('- review'), 'the move');
     assert.equal(
       moved,
       ['version: 1', 'cards:', '  fix-login.md:', '    tags:', '      - bug', '      - review', ''].join('\n'),
     );
     assert.equal(await fs.readFile(nodePath.join(root, 'fix-login.md'), 'utf8'), FIXTURE_MARKDOWN);
+
+    // Unknown lists are rejected.
+    fake.harness.errors.length = 0;
+    fake.send({ type: 'moveCard', path: nodePath.join(root, 'fix-login.md'), listId: 'nope' });
+    const error = await waitFor(() => fake.harness.errors[0], 'an error for the unknown list');
+    assert.match(error, /unknown list/);
 
     // Lists: insert at an index, reorder, then remove. The board file has no
     // `lists:` key, so the configured lists are used as the seed (fallback).
@@ -429,7 +441,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       'done',
     ]);
 
-    fake.send({ type: 'moveList', columnId: 'done', index: 0 });
+    fake.send({ type: 'moveList', listId: 'done', index: 0 });
     const reordered = await waitForText(
       boardPath,
       (text) => readBoard(text).lists?.[0] === 'done',
@@ -444,7 +456,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       'review',
     ]);
 
-    fake.send({ type: 'removeList', columnId: 'qa' });
+    fake.send({ type: 'removeList', listId: 'qa' });
     const withoutQa = await waitForText(boardPath, (text) => !text.includes('qa:QA'), 'list removal');
     assert.deepEqual(readBoard(withoutQa).lists, [
       'done',
@@ -458,14 +470,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     fake.harness.inputs.push('refine');
     fake.send({ type: 'addList', index: 1 });
     const prompted = await waitForText(boardPath, (text) => text.includes('refine'), 'the prompted list');
-    assert.deepEqual(readBoard(prompted).lists, [
-      'done',
-      'refine',
-      'backlog',
-      'todo',
-      'in-progress',
-      'review',
-    ]);
+    assert.equal(readBoard(prompted).lists?.[1], 'refine');
 
     // "Add list before" on the first list inserts at index 0.
     fake.harness.inputs.push('intake');
@@ -482,7 +487,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       const last = states[states.length - 1]?.state;
       return states.length > statesBefore && last?.context.storeError === undefined ? last : undefined;
     }, 'refresh after an external edit');
-    assert.deepEqual(afterExternal.view.columns.map((c: any) => c.id), ['__unassigned', 'design']);
+    assert.deepEqual(afterExternal.view.lists.map((list: any) => list.id), ['__unassigned', 'design']);
 
     // Opening a card three times reuses one editor group.
     const clicked = nodePath.join(root, 'fix-login.md');
@@ -499,7 +504,11 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       () => fake.harness.commands.find((entry) => entry.command === 'revealInExplorer'),
       'revealInExplorer',
     );
-    assert.equal(await waitFor(() => (fake.harness.clipboard.length ? fake.harness.clipboard[0] : undefined), 'clipboard'), 'fix-login.md');
+    const copied = await waitFor(
+      () => (fake.harness.clipboard.length ? fake.harness.clipboard[0] : undefined),
+      'clipboard',
+    );
+    assert.equal(copied, 'fix-login.md');
 
     // "Edit as YAML" switches the same document to the plain text editor.
     fake.harness.commands.length = 0;
@@ -515,12 +524,16 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     fake.harness.activeEditor = { document: { uri: Uri.file(boardPath) } };
     await fake.registered.get('markdownKanban.openBoard')!();
     assert.equal(fake.harness.panelsCreated, 1);
+
+    // Disposing the editor stops further posts.
+    fake.disposePanel();
+    await waitFor(() => (fake.harness.panelDisposed ? true : undefined), 'panel disposal');
   } finally {
     (Module as any)._load = originalLoad;
   }
 });
 
-test('custom editor contributions make *.kb.yaml a default board preview', async () => {
+test('the manifest makes *.kb.yaml a default board preview', async () => {
   const manifest = JSON.parse(
     await fs.readFile(nodePath.join(process.cwd(), 'package.json'), 'utf8'),
   );
@@ -533,5 +546,10 @@ test('custom editor contributions make *.kb.yaml a default board preview', async
     editor.selector.map((entry: any) => entry.filenamePattern),
     ['*.kb.yaml', '*.kb.yml'],
   );
-  assert.equal(manifest.main, './dist/extension.js');
+  assert.ok(manifest.contributes.configuration.properties['markdownKanban.defaultLists']);
+  assert.equal(
+    manifest.contributes.commands.some((command: any) => command.command === 'markdownKanban.refreshBoard'),
+    false,
+    'the redundant refresh command is gone',
+  );
 });

@@ -6,11 +6,11 @@ import {
   isBoardFile,
   minimalEdit,
   moveBoardList,
-  normalizeCardPath,
   normalizeTags,
   readBoard,
   removeBoardList,
   setCardTags,
+  toCardKey,
 } from '../src/core/store';
 
 test('isBoardFile matches only the board suffixes', () => {
@@ -20,15 +20,15 @@ test('isBoardFile matches only the board suffixes', () => {
   assert.equal(isBoardFile('kanban.yaml'), false);
 });
 
-test('normalizeCardPath strips ./ and backslashes', () => {
-  assert.equal(normalizeCardPath('./docs\\a.md'), 'docs/a.md');
-  assert.equal(normalizeCardPath('/docs/a.md'), 'docs/a.md');
+test('toCardKey strips ./ and backslashes', () => {
+  assert.equal(toCardKey('./docs\\a.md'), 'docs/a.md');
+  assert.equal(toCardKey('/docs/a.md'), 'docs/a.md');
 });
 
 test('readBoard reads the cards mapping', () => {
   const board = readBoard('version: 1\ncards:\n  docs/a.md:\n    tags:\n      - todo\n      - bug\n');
   assert.equal(board.error, undefined);
-  assert.deepEqual(board.tags.get('docs/a.md'), ['todo', 'bug']);
+  assert.deepEqual(board.cardTags.get('docs/a.md'), ['todo', 'bug']);
 });
 
 test('readBoard tolerates hand-written entry shapes', () => {
@@ -44,22 +44,22 @@ test('readBoard tolerates hand-written entry shapes', () => {
       '',
     ].join('\n'),
   );
-  assert.deepEqual(board.tags.get('a.md'), ['todo', 'bug']);
-  assert.deepEqual(board.tags.get('b.md'), ['review']);
-  assert.deepEqual(board.tags.get('c.md'), []);
-  assert.deepEqual(board.tags.get('d.md'), []);
+  assert.deepEqual(board.cardTags.get('a.md'), ['todo', 'bug']);
+  assert.deepEqual(board.cardTags.get('b.md'), ['review']);
+  assert.deepEqual(board.cardTags.get('c.md'), []);
+  assert.deepEqual(board.cardTags.get('d.md'), []);
 });
 
 test('readBoard treats an empty or card-less file as empty', () => {
-  assert.equal(readBoard('').tags.size, 0);
-  assert.equal(readBoard('# only a comment\n').tags.size, 0);
-  assert.equal(readBoard('version: 1\n').tags.size, 0);
+  assert.equal(readBoard('').cardTags.size, 0);
+  assert.equal(readBoard('# only a comment\n').cardTags.size, 0);
+  assert.equal(readBoard('version: 1\n').cardTags.size, 0);
 });
 
 test('readBoard reports broken YAML instead of throwing', () => {
   const board = readBoard('cards:\n  a.md: [unclosed\n');
   assert.match(board.error ?? '', /Invalid board file/);
-  assert.equal(board.tags.size, 0);
+  assert.equal(board.cardTags.size, 0);
 });
 
 test('readBoard reads the board-owned lists', () => {
@@ -77,7 +77,7 @@ test('readBoard accepts list objects and ignores malformed entries', () => {
   assert.deepEqual(board.lists, ['todo:To Do', 'done', '42']);
 });
 
-test('readBoard distinguishes missing lists from an explicit empty lists array', () => {
+test('readBoard distinguishes missing lists from an explicit empty list', () => {
   assert.equal(readBoard('version: 1\ncards: {}\n').lists, undefined);
   assert.deepEqual(readBoard('version: 1\nlists: []\n').lists, []);
 });
@@ -91,10 +91,7 @@ test('normalizeTags accepts sequences, comma lists and scalars', () => {
 test('setCardTags fills an empty board file', () => {
   const update = setCardTags('', 'docs/a.md', ['todo']);
   assert.equal(update.changed, true);
-  assert.equal(
-    update.text,
-    'version: 1\ncards:\n  docs/a.md:\n    tags:\n      - todo\n',
-  );
+  assert.equal(update.text, 'version: 1\ncards:\n  docs/a.md:\n    tags:\n      - todo\n');
 });
 
 test('setCardTags keeps existing cards and comments intact', () => {
@@ -153,11 +150,8 @@ test('setCardTags refuses to rewrite a broken board file', () => {
 });
 
 test('minimalEdit narrows a whole-file change to the diff', () => {
-  const edit = minimalEdit('abcXYdef', 'abcZZdef');
-  assert.deepEqual(edit, { start: 3, end: 5, newText: 'ZZ' });
-
-  const append = minimalEdit('abc', 'abcd');
-  assert.deepEqual(append, { start: 3, end: 3, newText: 'd' });
+  assert.deepEqual(minimalEdit('abcXYdef', 'abcZZdef'), { start: 3, end: 5, newText: 'ZZ' });
+  assert.deepEqual(minimalEdit('abc', 'abcd'), { start: 3, end: 3, newText: 'd' });
 });
 
 test('boardFileTemplate writes the board lists and round-trips', () => {
@@ -167,7 +161,7 @@ test('boardFileTemplate writes the board lists and round-trips', () => {
   const board = readBoard(template);
   assert.equal(board.error, undefined);
   assert.deepEqual(board.lists, ['backlog', 'in-progress:In Progress', 'done']);
-  assert.equal(board.tags.size, 0);
+  assert.equal(board.cardTags.size, 0);
 });
 
 test('boardFileTemplate defaults to no custom lists (No status only)', () => {
@@ -181,7 +175,7 @@ test('addBoardList appends a list and rejects duplicates', () => {
   const added = addBoardList(start, 'todo');
   assert.equal(added.changed, true);
   assert.deepEqual(readBoard(added.text).lists, ['todo']);
-  assert.deepEqual(readBoard(added.text).tags.get('a.md'), ['bug']);
+  assert.deepEqual(readBoard(added.text).cardTags.get('a.md'), ['bug']);
 
   const addedCustom = addBoardList(added.text, 'in-progress:In Progress');
   assert.deepEqual(readBoard(addedCustom.text).lists, ['todo', 'in-progress:In Progress']);
@@ -204,7 +198,10 @@ test('addBoardList inserts at the requested position', () => {
 });
 
 test('addBoardList seeds lists from the fallback when the key is missing', () => {
-  const update = addBoardList('version: 1\ncards: {}\n', 'wip', { index: 1, fallbackLists: ['todo', 'done'] });
+  const update = addBoardList('version: 1\ncards: {}\n', 'wip', {
+    index: 1,
+    fallbackLists: ['todo', 'done'],
+  });
   assert.deepEqual(readBoard(update.text).lists, ['todo', 'wip', 'done']);
 });
 
@@ -226,7 +223,7 @@ test('moveBoardList reorders lists without touching cards', () => {
   const moved = moveBoardList(start, 'review', 0);
   assert.equal(moved.changed, true);
   assert.deepEqual(readBoard(moved.text).lists, ['review', 'backlog', 'todo', 'done']);
-  assert.deepEqual(readBoard(moved.text).tags.get('a.md'), ['review']);
+  assert.deepEqual(readBoard(moved.text).cardTags.get('a.md'), ['review']);
 
   const toEnd = moveBoardList(moved.text, 'review', 99);
   assert.deepEqual(readBoard(toEnd.text).lists, ['backlog', 'todo', 'done', 'review']);
@@ -255,7 +252,7 @@ test('removeBoardList removes the list without touching cards', () => {
   const removed = removeBoardList(start, 'todo');
   assert.equal(removed.changed, true);
   assert.deepEqual(readBoard(removed.text).lists, ['done']);
-  assert.deepEqual(readBoard(removed.text).tags.get('a.md'), ['todo', 'bug']);
+  assert.deepEqual(readBoard(removed.text).cardTags.get('a.md'), ['todo', 'bug']);
 
   const empty = removeBoardList(removed.text, 'done');
   assert.deepEqual(readBoard(empty.text).lists, []);
@@ -264,5 +261,8 @@ test('removeBoardList removes the list without touching cards', () => {
 test('setCardTags preserves the lists section', () => {
   const before = 'version: 1\nlists:\n  - todo\n  - done\ncards: {}\n';
   const update = setCardTags(before, 'a.md', ['todo']);
-  assert.equal(update.text, 'version: 1\nlists:\n  - todo\n  - done\ncards:\n  a.md:\n    tags:\n      - todo\n');
+  assert.equal(
+    update.text,
+    'version: 1\nlists:\n  - todo\n  - done\ncards:\n  a.md:\n    tags:\n      - todo\n',
+  );
 });
