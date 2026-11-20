@@ -130,7 +130,7 @@ npm run typecheck:webview # 只检查 media/main.js（@ts-check）
 2. 用 **Run Extension (no other extensions)** 配置：排除其它已安装扩展的干扰；
 3. 关掉 VS Code 后重命名该文件夹的窗口状态
    `%APPDATA%\Code\User\workspaceStorage\<hash>`（只丢窗口布局，可恢复）；
-4. 彻底绕开调试器：`code --extensionDevelopmentPath="D:\vscode-kanban-trial" --new-window` 起一个普通实例，
+4. 彻底绕开调试器：`code --extensionDevelopmentPath="<本仓库路径>" --new-window` 起一个普通实例，
    配合 `npm run watch` + 在该窗口按 `Ctrl+R` 重载即可迭代。
 
 - [src/core/](src/core) 是不依赖 `vscode` 的纯逻辑（Markdown 扫描与摘要、看板文件读写、list 解析），单测覆盖
