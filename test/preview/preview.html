@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Markdown Kanban preview</title>
+    <style>
+      /* Stand-in for the VS Code theme variables, using the Dark+ palette. */
+      :root {
+        --vscode-font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+        --vscode-font-size: 13px;
+        --vscode-foreground: #cccccc;
+        --vscode-editor-background: #1f1f1f;
+        --vscode-editorWidget-background: #202020;
+        --vscode-editorWidget-border: #454545;
+        --vscode-sideBar-background: #181818;
+        --vscode-panel-border: #3c3c3c;
+        --vscode-descriptionForeground: #9d9d9d;
+        --vscode-input-background: #313131;
+        --vscode-input-foreground: #cccccc;
+        --vscode-focusBorder: #0078d4;
+        --vscode-list-hoverBackground: #2a2d2e;
+        --vscode-toolbar-hoverBackground: #5a5d5e50;
+        --vscode-button-background: #0078d4;
+        --vscode-button-foreground: #ffffff;
+        --vscode-button-hoverBackground: #026ec1;
+        --vscode-badge-background: #616161;
+        --vscode-badge-foreground: #f8f8f8;
+        --vscode-icon-foreground: #cccccc;
+        --vscode-textLink-foreground: #4daafc;
+        --vscode-menu-background: #1f1f1f;
+        --vscode-menu-foreground: #cccccc;
+        --vscode-menu-selectionBackground: #0078d4;
+        --vscode-menu-selectionForeground: #ffffff;
+        --vscode-menu-separatorBackground: #454545;
+        --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+        --vscode-charts-blue: #3794ff;
+        --vscode-charts-purple: #b180d7;
+        --vscode-charts-yellow: #cca700;
+        --vscode-charts-orange: #d18616;
+        --vscode-charts-green: #89d185;
+        --vscode-errorForeground: #f85149;
+        --vscode-textCodeBlock-background: #2b2b2b;
+        --vscode-editor-font-family: "Cascadia Code", Consolas, monospace;
+      }
+    </style>
+    <link rel="stylesheet" href="../../media/main.css" />
+  </head>
+  <body>
+    <div id="app" data-loading="true"></div>
+
+    <script>
+      const now = Date.now();
+      const minutes = (n) => now - n * 60000;
+
+      function card(id, title, summary, tags, statusTag, columnId, updated, error) {
+        return {
+          id,
+          title,
+          path: id.replace(/^.*?\/workspace\//, ''),
+          tags,
+          statusTag,
+          columnId,
+          summary,
+          updated,
+          error,
+        };
+      }
+
+      const sample = {
+        view: {
+          totalCards: 11,
+          columns: [
+            {
+              id: '__unassigned',
+              title: 'No status',
+              tag: null,
+              cards: [
+                card(
+                  '/workspace/docs/meeting-notes.md',
+                  'Weekly sync notes',
+                  'Decisions from the platform sync: keep the SDK thin and move retries into the client.',
+                  ['notes'],
+                  null,
+                  '__unassigned',
+                  minutes(240),
+                ),
+              ],
+            },
+            {
+              id: 'backlog',
+              title: 'Backlog',
+              tag: 'backlog',
+              cards: [
+                card(
+                  '/workspace/docs/local-search-index.md',
+                  'Experiment with a local search index',
+                  'Try building a tiny inverted index over the workspace so the board can filter without scanning every file.',
+                  ['idea', 'performance'],
+                  'backlog',
+                  'backlog',
+                  minutes(2880),
+                ),
+                card(
+                  '/workspace/docs/keyboard-shortcuts.md',
+                  'Keyboard shortcuts for moving cards',
+                  'Press a number key on a focused card to send it to that column.',
+                  ['accessibility'],
+                  'backlog',
+                  'backlog',
+                  minutes(60 * 26),
+                ),
+              ],
+            },
+            {
+              id: 'todo',
+              title: 'Todo',
+              tag: 'todo',
+              cards: [
+                card(
+                  '/workspace/docs/fix-login-redirect.md',
+                  'Fix login redirect loop',
+                  'After a session expires the app bounces between /login and /dashboard forever.',
+                  ['bug'],
+                  'todo',
+                  'todo',
+                  minutes(12),
+                ),
+                card(
+                  '/workspace/docs/summary-extraction.md',
+                  'Improve summary extraction for lists',
+                  'Lists currently render as a single run-on sentence on the card.',
+                  ['board'],
+                  'todo',
+                  'todo',
+                  minutes(90),
+                ),
+                card(
+                  '/workspace/docs/multi-root.md',
+                  'Support multi-root workspaces',
+                  'Cards from several folders should be distinguishable by a path prefix.',
+                  ['board'],
+                  'todo',
+                  'todo',
+                  minutes(600),
+                ),
+              ],
+            },
+            {
+              id: 'in-progress',
+              title: 'In Progress',
+              tag: 'in-progress',
+              cards: [
+                card(
+                  '/workspace/docs/drag-and-drop.md',
+                  'Drag and drop between columns',
+                  'Dragging a card rewrites only the front matter block so cursor position and body text survive.',
+                  ['board', 'frontmatter'],
+                  'in-progress',
+                  'in-progress',
+                  minutes(6),
+                ),
+                card(
+                  '/workspace/docs/crlf-support.md',
+                  'Preserve CRLF line endings',
+                  'Windows documents were rewritten with LF endings after a move.',
+                  ['bug'],
+                  'in-progress',
+                  'in-progress',
+                  minutes(180),
+                ),
+              ],
+            },
+            {
+              id: 'review',
+              title: 'Review',
+              tag: 'review',
+              cards: [
+                card(
+                  '/workspace/docs/tag-chips.md',
+                  'Add tag chips to cards',
+                  'Chips are clickable filters and reuse the same styling as the tag bar.',
+                  ['board'],
+                  'review',
+                  'review',
+                  minutes(45),
+                  'Invalid front matter: unexpected end of the stream within a flow collection',
+                ),
+              ],
+            },
+            {
+              id: 'done',
+              title: 'Done',
+              tag: 'done',
+              cards: [
+                card(
+                  '/workspace/docs/scan-workspace.md',
+                  'Scan the workspace for Markdown files',
+                  'Recursive walk that skips vendor folders and honours a file cap.',
+                  ['board'],
+                  'done',
+                  'done',
+                  minutes(60 * 72),
+                ),
+                card(
+                  '/workspace/docs/frontmatter-parse.md',
+                  'Parse YAML front matter',
+                  'Round-trips comments and unknown keys through the yaml document API.',
+                  ['frontmatter'],
+                  'done',
+                  'done',
+                  minutes(60 * 100),
+                ),
+              ],
+            },
+          ],
+        },
+        context: {
+          boardFile: 'D:\\vscode-kanban-trial\\kanban.kb.yaml',
+          boardFileName: 'kanban.kb.yaml',
+          folderName: 'vscode-kanban-trial',
+          fileCount: 11,
+          truncated: false,
+          storeError: undefined,
+          staleEntries: 0,
+          moveTargets: [
+            { id: '__unassigned', title: 'No status' },
+            { id: 'backlog', title: 'Backlog' },
+            { id: 'todo', title: 'Todo' },
+            { id: 'in-progress', title: 'In Progress' },
+            { id: 'review', title: 'Review' },
+            { id: 'done', title: 'Done' },
+          ],
+        },
+      };
+
+      let persisted;
+      window.acquireVsCodeApi = function () {
+        return {
+          postMessage(message) {
+            console.log('[preview] postMessage ' + JSON.stringify(message));
+            window.__messages = window.__messages || [];
+            window.__messages.push(message);
+          },
+          getState() {
+            return persisted;
+          },
+          setState(value) {
+            persisted = value;
+          },
+        };
+      };
+
+      window.addEventListener('load', () => {
+        window.postMessage({ type: 'state', state: sample }, '*');
+      });
+    </script>
+    <script src="../../media/main.js"></script>
+  </body>
+</html>

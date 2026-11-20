@@ -1,0 +1,188 @@
+{
+  "name": "markdown-kanban",
+  "displayName": "Markdown Kanban",
+  "description": "Collect the Markdown files in your workspace and show them as a GitLab-style issue board. Column membership is stored in each file's front matter.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "publisher": "markdown-kanban",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "markdown",
+    "kanban",
+    "board",
+    "frontmatter",
+    "issues"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:markdownKanban.openBoard",
+    "onCommand:markdownKanban.openAsText",
+    "onCommand:markdownKanban.createBoardFile",
+    "onCommand:markdownKanban.refreshBoard",
+    "onCustomEditor:markdownKanban.board"
+  ],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "markdownKanban.board",
+        "displayName": "Kanban Board",
+        "selector": [
+          {
+            "filenamePattern": "*.kb.yaml"
+          },
+          {
+            "filenamePattern": "*.kb.yml"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "markdownKanban.openBoard",
+        "title": "Open Board",
+        "category": "Markdown Kanban",
+        "icon": "$(project)"
+      },
+      {
+        "command": "markdownKanban.openAsText",
+        "title": "Open Board File as Text (YAML)",
+        "category": "Markdown Kanban",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "markdownKanban.refreshBoard",
+        "title": "Refresh Board",
+        "category": "Markdown Kanban",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "markdownKanban.createBoardFile",
+        "title": "Create Board File",
+        "category": "Markdown Kanban",
+        "icon": "$(new-file)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "markdownKanban.openBoard",
+          "when": "resourceFilename =~ /\\.kb\\.ya?ml$/i && activeCustomEditorId != markdownKanban.board",
+          "group": "navigation"
+        },
+        {
+          "command": "markdownKanban.openAsText",
+          "when": "resourceFilename =~ /\\.kb\\.ya?ml$/i && activeCustomEditorId == markdownKanban.board",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "markdownKanban.openBoard"
+        },
+        {
+          "command": "markdownKanban.openAsText",
+          "when": "resourceFilename =~ /\\.kb\\.ya?ml$/i"
+        },
+        {
+          "command": "markdownKanban.createBoardFile"
+        },
+        {
+          "command": "markdownKanban.refreshBoard",
+          "when": "markdownKanban.boardOpen"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Markdown Kanban",
+      "properties": {
+        "markdownKanban.columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Default lists for new board files, and fallback when a board file has no `lists` key. Empty by default so new boards start with only the No status list. Use `tag:Display Title` to customise a column header (e.g. `in-progress:In Progress`)."
+        },
+        "markdownKanban.excludeDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "node_modules",
+            ".git",
+            ".hg",
+            ".svn",
+            "dist",
+            "out",
+            "build",
+            "coverage",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "target",
+            "vendor",
+            ".next",
+            ".nuxt",
+            ".idea",
+            ".vscode"
+          ],
+          "description": "Directory names that are not scanned for Markdown files."
+        },
+        "markdownKanban.sortBy": {
+          "type": "string",
+          "enum": [
+            "updated",
+            "title"
+          ],
+          "default": "updated",
+          "description": "How cards are ordered inside a column."
+        },
+        "markdownKanban.showUnassigned": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a leading column for documents that carry no column tag."
+        },
+        "markdownKanban.openMode": {
+          "type": "string",
+          "enum": [
+            "beside",
+            "activeTab"
+          ],
+          "default": "beside",
+          "description": "Where a document opens when a card is clicked. `beside` keeps the board visible."
+        },
+        "markdownKanban.maxFiles": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 50,
+          "description": "Upper bound on the number of Markdown files scanned per workspace folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.mjs --minify",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json",
+    "build:tests": "node esbuild.mjs --tests",
+    "test": "node esbuild.mjs --tests && node --test \"dist-test/*.test.js\""
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
