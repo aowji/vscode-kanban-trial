@@ -41,7 +41,7 @@ export function normalizeTags(value: unknown): string[] {
   return tags;
 }
 
-export interface BoardFile {
+interface BoardFile {
   /** Card path -> tags. */
   cardTags: Map<string, string[]>;
   /** Lists owned by this board, `undefined` when the file has no `lists` key. */
@@ -112,6 +112,8 @@ export function setCardTags(text: string, relPath: string, tags: string[]): Stor
   if (tags.length === 0) doc.deleteIn(['cards', key]);
   else doc.setIn(['cards', key], { tags });
 
+  // Block style on purpose: `setIn` can leave the new nodes in flow style, which
+  // would turn a hand-written card into `{tags: [todo]}`.
   for (const path of [['cards'], ['cards', key], ['cards', key, 'tags']]) {
     const node = doc.getIn(path, true) as { flow?: boolean } | undefined;
     if (node && typeof node === 'object' && 'flow' in node) node.flow = false;
@@ -120,7 +122,7 @@ export function setCardTags(text: string, relPath: string, tags: string[]): Stor
   return finishUpdate(doc, text);
 }
 
-export interface AddListOptions {
+interface AddListOptions {
   /** Insert position among lists (0-based). Appended when omitted. */
   index?: number;
   /** Lists used to seed `lists:` when the board file has no such key yet. */

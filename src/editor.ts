@@ -5,7 +5,6 @@ import * as vscode from 'vscode';
 import {
   buildBoardView,
   UNASSIGNED_LIST_ID,
-  UNASSIGNED_LIST_TITLE,
   type BoardList,
   type BoardView,
   type CardInput,
@@ -29,7 +28,7 @@ export const VIEW_TYPE = 'markdownKanban.board';
 const REFRESH_DEBOUNCE_MS = 250;
 const PLAIN_EDITOR = 'default';
 
-export interface BoardState {
+interface BoardState {
   view: BoardView;
   meta: {
     /** Absolute path of the board file. */
@@ -41,7 +40,6 @@ export interface BoardState {
     storeError?: string;
     /** Board entries whose document no longer exists. */
     staleEntries: number;
-    moveTargets: { id: string; title: string }[];
   };
 }
 
@@ -77,7 +75,7 @@ export class KanbanEditorProvider implements vscode.CustomTextEditorProvider {
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): void {
-    new KanbanEditor(panel, this.extensionUri, document);
+    void new KanbanEditor(panel, this.extensionUri, document);
     log(`board editor resolved for ${document.uri.fsPath}`);
   }
 }
@@ -212,16 +210,14 @@ class KanbanEditor {
       readText: readTextPreferringOpenDocuments,
     });
 
-    const cards: CardInput[] = scanned.cards.map((card) => ({
-      ...card,
-      tags: board.cardTags.get(toCardKey(card.relPath)) ?? [],
-    }));
-
-    const known = new Set(scanned.cards.map((card) => toCardKey(card.relPath)));
-    let staleEntries = 0;
-    for (const key of board.cardTags.keys()) {
-      if (!known.has(key)) staleEntries += 1;
+    const cards: CardInput[] = [];
+    const known = new Set<string>();
+    for (const card of scanned.cards) {
+      const key = toCardKey(card.relPath);
+      known.add(key);
+      cards.push({ ...card, tags: board.cardTags.get(key) ?? [] });
     }
+    const staleEntries = [...board.cardTags.keys()].filter((key) => !known.has(key)).length;
 
     return {
       view: buildBoardView(cards, { lists, sortBy: config.sortBy }),
@@ -233,10 +229,6 @@ class KanbanEditor {
         truncated: scanned.truncated,
         storeError: board.error,
         staleEntries,
-        moveTargets: [
-          { id: UNASSIGNED_LIST_ID, title: UNASSIGNED_LIST_TITLE },
-          ...lists.map((list) => ({ id: list.id, title: list.tag })),
-        ],
       },
     };
   }
@@ -350,37 +342,33 @@ class KanbanEditor {
   private async moveCard(absPath: string, listId: string): Promise<void> {
     const config = readConfig();
     const relPath = toPosixPath(nodePath.relative(this.boardDir, absPath));
+    const before = this.document.getText();
+    const board = readBoard(before);
+    const lists = board.lists ?? config.lists;
 
-    try {
-      const before = this.document.getText();
-      const board = readBoard(before);
-      const lists = board.lists ?? config.lists;
-
-      const list = lists.find((entry) => entry.id === listId);
-      const toUnassigned = listId === UNASSIGNED_LIST_ID;
-      if (!list && !toUnassigned) {
-        void vscode.window.showErrorMessage(`Markdown Kanban: unknown list "${listId}".`);
-        return;
-      }
-
-      const current = board.cardTags.get(toCardKey(relPath)) ?? [];
-      const listTags = new Set(lists.map((entry) => entry.tag.toLowerCase()));
-      const next = current.filter((tag) => !listTags.has(tag.toLowerCase()));
-      if (list) next.push(list.tag);
-
-      const unchanged =
-        next.length === current.length &&
-        current.every((tag) => next.some((other) => other.toLowerCase() === tag.toLowerCase()));
-      if (unchanged) return;
-
-      if (!(await this.applyBoardUpdate(setCardTags(before, relPath, next)))) return;
-      await this.refresh();
-    } catch (error) {
-      logError(`move ${relPath} -> ${listId}`, error);
-      void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
-      // The webview moved the card optimistically; put it back where it really is.
-      await this.refresh();
+    const list = lists.find((entry) => entry.id === listId);
+    if (!list && listId !== UNASSIGNED_LIST_ID) {
+      void vscode.window.showErrorMessage(`Markdown Kanban: unknown list "${listId}".`);
+      return;
     }
+
+    const current = board.cardTags.get(toCardKey(relPath)) ?? [];
+    const listTags = new Set(lists.map((entry) => entry.tag.toLowerCase()));
+    const next = current.filter((tag) => !listTags.has(tag.toLowerCase()));
+    if (list) next.push(list.tag);
+
+    // Dropping a card back into its own column: skip, otherwise a hand-written
+    // `tags: [a]` would be reformatted into block style for no reason.
+    const unchanged =
+      next.length === current.length &&
+      current.every((tag) => next.some((other) => other.toLowerCase() === tag.toLowerCase()));
+    if (unchanged) return;
+
+    await this.runMutation(
+      `move ${relPath} -> ${listId}`,
+      () => setCardTags(before, relPath, next),
+      true,
+    );
   }
 
   private async addList(rawEntry?: string, index?: number): Promise<void> {
@@ -432,25 +420,34 @@ class KanbanEditor {
       prompt: `New name for "${list.tag}"; the tag on its cards is renamed too`,
       value: list.tag,
       ignoreFocusOut: true,
-      validateInput: (input) =>
-        input.trim() ? undefined : 'A list name is required',
+      validateInput: (input) => (input.trim() ? undefined : 'A list name is required'),
     });
     const tag = value?.trim();
     if (!tag || tag === list.tag) return;
 
+    const fallbackLists = config.lists.map((entry) => entry.tag);
     await this.runMutation(`renameList ${listId} -> ${tag}`, () =>
-      renameListTag(this.document.getText(), listId, tag, configTags()),
+      renameListTag(this.document.getText(), listId, tag, fallbackLists),
     );
   }
 
-  /** Writes one board update and refreshes; failures are logged and reported. */
-  private async runMutation(label: string, build: () => StoreUpdate): Promise<void> {
+  /**
+   * Writes one board update and refreshes. Failures are logged and reported;
+   * `refreshOnError` is for mutations the webview applied optimistically, which
+   * have to be redrawn from the file when the write fails.
+   */
+  private async runMutation(
+    label: string,
+    build: () => StoreUpdate,
+    refreshOnError = false,
+  ): Promise<void> {
     try {
       if (!(await this.applyBoardUpdate(build()))) return;
       await this.refresh();
     } catch (error) {
       logError(label, error);
       void vscode.window.showErrorMessage(`Markdown Kanban: ${(error as Error).message}`);
+      if (refreshOnError) await this.refresh();
     }
   }
 

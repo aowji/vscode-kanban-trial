@@ -3,7 +3,10 @@
 
   const UNASSIGNED_LIST_ID = '__unassigned';
 
-  const api = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : createPreviewApi();
+  const api =
+    typeof acquireVsCodeApi === 'function'
+      ? acquireVsCodeApi()
+      : { postMessage() {}, getState() { return undefined; }, setState() {} };
 
   /** @type {{ view: any, context: any } | null} */
   let model = null;
@@ -19,18 +22,6 @@
   const collapsedLists = new Set();
 
   const app = document.getElementById('app');
-
-  function createPreviewApi() {
-    return {
-      postMessage(message) {
-        console.log('[preview] postMessage', message);
-      },
-      getState() {
-        return undefined;
-      },
-      setState() {},
-    };
-  }
 
   function esc(value) {
     return String(value === null || value === undefined ? '' : value).replace(
@@ -646,7 +637,7 @@
     if (!card || !model) return;
 
     const items = [];
-    for (const target of model.meta.moveTargets) {
+    for (const target of model.view.lists) {
       if (target.id === card.listId) continue;
       items.push({
         label: 'Move to ' + target.title,

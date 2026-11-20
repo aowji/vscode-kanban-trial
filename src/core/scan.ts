@@ -23,7 +23,7 @@ export const DEFAULT_EXCLUDED_DIRS: readonly string[] = [
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
 
-export interface ScanOptions {
+interface ScanOptions {
   excludeDirectories?: readonly string[];
   maxFiles?: number;
   /** Returns file contents; lets the caller prefer unsaved editor buffers. */
@@ -40,7 +40,7 @@ export interface ScannedCard {
   error?: string;
 }
 
-export interface ScanResult {
+interface ScanResult {
   cards: ScannedCard[];
   fileCount: number;
   truncated: boolean;

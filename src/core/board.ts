@@ -29,7 +29,7 @@ export interface CardView {
   error?: string;
 }
 
-export interface ListView {
+interface ListView {
   id: string;
   /** What the column header shows: the tag, or "No status" for the bucket. */
   title: string;
@@ -77,7 +77,7 @@ function firstListOf(
   return undefined;
 }
 
-export interface BuildBoardOptions {
+interface BuildBoardOptions {
   lists: readonly BoardList[];
   sortBy?: 'updated' | 'title';
 }

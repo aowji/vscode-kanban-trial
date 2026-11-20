@@ -4,7 +4,7 @@ import { DEFAULT_EXCLUDED_DIRS } from './core/scan';
 
 export const CONFIG_SECTION = 'markdownKanban';
 
-export interface BoardConfig {
+interface BoardConfig {
   /** Default lists for new board files; the fallback when a board has no `lists` key. */
   lists: BoardList[];
   excludeDirectories: string[];

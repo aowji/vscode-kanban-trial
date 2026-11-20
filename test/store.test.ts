@@ -156,6 +156,17 @@ test('setCardTags is a no-op when nothing changes', () => {
   assert.equal(update.text, before);
 });
 
+test('setCardTags normalizes other spellings even when the tags match', () => {
+  // This asymmetry is why the editor skips a drop onto the card's own column:
+  // without that guard a hand-written `tags: [todo]` would be reformatted.
+  const flow = setCardTags('version: 1\ncards:\n  a.md:\n    tags: [todo]\n', 'a.md', ['todo']);
+  assert.equal(flow.changed, true);
+  assert.equal(flow.text, 'version: 1\ncards:\n  a.md:\n    tags:\n      - todo\n');
+
+  const comma = setCardTags('version: 1\ncards:\n  a.md:\n    tags: "todo"\n', 'a.md', ['todo']);
+  assert.equal(comma.changed, true);
+});
+
 test('setCardTags refuses to rewrite a broken board file', () => {
   assert.throws(() => setCardTags('cards:\n  a.md: [unclosed\n', 'a.md', ['todo']), /Invalid board file/);
 });
