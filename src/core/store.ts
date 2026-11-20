@@ -1,5 +1,5 @@
 import { Document, YAMLMap, YAMLSeq, isMap, isSeq, parseDocument } from 'yaml';
-import { parseLists, type BoardList } from './board';
+import { parseLists, serializeList, type BoardList } from './board';
 
 const BOARD_FILE_SUFFIXES = ['.kb.yaml', '.kb.yml'] as const;
 export const DEFAULT_BOARD_FILE_NAME = 'kanban.kb.yaml';
@@ -165,6 +165,34 @@ export function moveBoardList(text: string, listId: string, toIndex: number): St
   seq.items.splice(to, 0, node);
   ensureBoardShape(doc);
   return finishUpdate(doc, text);
+}
+
+/**
+ * Renames a list's display title. The tag, the cards and the list order are
+ * untouched: only the `tag:Display Title` label in `lists:` changes.
+ */
+export function renameBoardList(
+  text: string,
+  listId: string,
+  title: string,
+  fallbackLists: readonly string[] = [],
+): StoreUpdate {
+  const targetId = listId.trim().toLowerCase();
+  const nextTitle = title.trim();
+  if (!nextTitle) throw new Error('List title cannot be empty.');
+
+  const doc = parseBoardForWrite(text);
+  const seq = ensureListsSeq(doc, fallbackLists);
+
+  for (let i = 0; i < seq.items.length; i += 1) {
+    const entry = nodeToListEntry(seq.items[i]);
+    const list = entry ? parseLists([entry])[0] : undefined;
+    if (list?.id !== targetId || list.title === nextTitle) continue;
+    seq.items[i] = doc.createNode(serializeList({ ...list, title: nextTitle }));
+    ensureBoardShape(doc);
+    return finishUpdate(doc, text);
+  }
+  return noChange(text);
 }
 
 /**

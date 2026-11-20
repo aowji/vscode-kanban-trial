@@ -679,6 +679,7 @@
     items.push({ label: 'Add list before', run: () => api.postMessage({ type: 'addList', index: at }) });
     items.push({ label: 'Add list after', run: () => api.postMessage({ type: 'addList', index: at + 1 }) });
     items.push({ separator: true });
+    items.push({ label: 'Rename list', run: () => api.postMessage({ type: 'renameList', listId: listId }) });
     items.push({
       label: collapsedLists.has(listId) ? 'Expand list' : 'Collapse list',
       run: () => toggleCollapsed(listId),

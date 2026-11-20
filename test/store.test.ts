@@ -10,6 +10,7 @@ import {
   normalizeTags,
   readBoard,
   removeBoardList,
+  renameBoardList,
   setCardTags,
   toCardKey,
 } from '../src/core/store';
@@ -277,6 +278,46 @@ test('removeBoardList removes the list without touching cards', () => {
 
   const empty = removeBoardList(removed.text, 'done');
   assert.deepEqual(listEntries(empty.text), []);
+});
+
+test('renameBoardList changes only the display title', () => {
+  const start = [
+    'version: 1',
+    'lists:',
+    '  - todo',
+    '  - done',
+    'cards:',
+    '  a.md:',
+    '    tags:',
+    '      - todo',
+    '',
+  ].join('\n');
+
+  const renamed = renameBoardList(start, 'todo', 'To Do');
+  assert.equal(renamed.changed, true);
+  assert.deepEqual(
+    readBoard(renamed.text).lists?.map((list) => [list.tag, list.title]),
+    [
+      ['todo', 'To Do'],
+      ['done', 'Done'],
+    ],
+  );
+  assert.deepEqual(readBoard(renamed.text).cardTags.get('a.md'), ['todo']);
+
+  // Renaming back to the prettified tag collapses to the short form again.
+  assert.deepEqual(listEntries(renameBoardList(renamed.text, 'todo', 'Todo').text), ['todo', 'done']);
+});
+
+test('renameBoardList is inert for no-ops, unknown lists and empty titles', () => {
+  const start = 'version: 1\nlists:\n  - todo\ncards: {}\n';
+  assert.equal(renameBoardList(start, 'todo', 'Todo').changed, false);
+  assert.equal(renameBoardList(start, 'missing', 'Anything').changed, false);
+  assert.throws(() => renameBoardList(start, 'todo', '   '), /cannot be empty/);
+});
+
+test('renameBoardList seeds lists from the fallback when the key is missing', () => {
+  const update = renameBoardList('version: 1\ncards: {}\n', 'done', 'Shipped', ['todo', 'done']);
+  assert.deepEqual(listEntries(update.text), ['todo', 'done:Shipped']);
 });
 
 test('setCardTags preserves the lists section', () => {

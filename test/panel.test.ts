@@ -486,6 +486,17 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     const prepended = await waitForText(boardPath, (text) => text.includes('intake'), 'the prepended list');
     assert.equal(listEntries(prepended)?.[0], 'intake');
 
+    // Renaming a list only rewrites its label; the tag and cards stay.
+    fake.harness.inputs.push('Intake & Triage');
+    fake.send({ type: 'renameList', listId: 'intake' });
+    const renamed = await waitForText(
+      boardPath,
+      (text) => text.includes('Intake & Triage'),
+      'the renamed list',
+    );
+    assert.equal(listEntries(renamed)?.[0], 'intake:Intake & Triage');
+    assert.deepEqual(readBoard(renamed).cardTags.get('fix-login.md'), ['bug', 'review']);
+
     // External edits to the board file refresh the webview.
     const statesBefore = fake.harness.messages.filter((m) => m.type === 'state').length;
     boardDocument.replaceText('version: 1\nlists:\n  - design\ncards: {}\n');

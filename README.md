@@ -12,7 +12,7 @@
 - 列由看板文件里的 `lists:` 决定；**默认只有 `No status` 一列**，其它 list 可在 `*.kb.yaml` 里写，也可以直接在看板界面增删：
   - 最右端 `+ Add list` 追加新列
   - 拖拽列头左右移动即可重排顺序（顺序错了不用删了重加）
-  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Collapse list` / `Remove list`，插入时弹出输入框
+  - 列头 `⋮` 菜单：`Move left` / `Move right` / `Add list before` / `Add list after` / `Rename list` / `Collapse list` / `Remove list`，插入与改名都会弹出输入框
 - **列可以折叠**：点列头左侧的 `❮` 收成窄条（只留竖排标题和计数），点窄条或 `❯` 展开；折叠的列照样能接收拖过来的卡片。折叠只是视图偏好（和搜索、标签过滤一样按窗口记住），不写进 `*.kb.yaml`
 - 没有列 tag 的文档进入最左侧的 “No status” 列；删除 list 不会丢失卡片原有 tag，卡片会自动回到 “No status”
 - **拖拽卡片换列**，或点卡片右上角的 `⋮` 菜单换列（键盘可用）
@@ -71,6 +71,7 @@ cards:
 ```
 
 - `lists:` 定义这个看板自己的列与列序；支持 `tag:显示名` 改名。不写（缺 `lists` 键）时退回设置里的 `markdownKanban.defaultLists`；显式写 `lists: []` 则是"只有 No status"
+- 改列名（列头 `⋮` → *Rename list*）只改这里显示的标题，tag 与卡片归属都不变；改回与 tag 对应的默认标题时会自动收回简写形式（`in-progress:In Progress` → `in-progress`）
 - key 是相对看板文件所在目录的 POSIX 路径；拖动卡片只会重写对应的这一条（注释、其它条目、`lists` 原样保留）
 - 列 tag 取 `lists` 里的那几个；一张卡片只会落在一列
 - 其余 tag 会作为 chip 显示在卡片上，不参与分列

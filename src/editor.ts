@@ -18,6 +18,7 @@ import {
   moveBoardList,
   readBoard,
   removeBoardList,
+  renameBoardList,
   setCardTags,
   toCardKey,
   type StoreUpdate,
@@ -275,6 +276,9 @@ class KanbanEditor {
       case 'removeList':
         if (typeof message.listId === 'string') await this.removeList(message.listId);
         return;
+      case 'renameList':
+        if (typeof message.listId === 'string') await this.renameList(message.listId);
+        return;
       case 'revealCard':
         if (message.path) {
           await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(message.path));
@@ -417,6 +421,33 @@ class KanbanEditor {
         this.document.getText(),
         listId,
         readConfig().lists.map(serializeList),
+      ),
+    );
+  }
+
+  private async renameList(listId: string): Promise<void> {
+    if (listId === UNASSIGNED_LIST_ID) return;
+    const config = readConfig();
+    const board = readBoard(this.document.getText());
+    const list = (board.lists ?? config.lists).find((entry) => entry.id === listId);
+    if (!list) return;
+
+    const value = await vscode.window.showInputBox({
+      title: 'Rename list',
+      prompt: `Display title for "${list.tag}" (the tag and its cards stay as they are)`,
+      value: list.title,
+      ignoreFocusOut: true,
+      validateInput: (input) => (input.trim() ? undefined : 'A list title is required'),
+    });
+    const title = value?.trim();
+    if (!title || title === list.title) return;
+
+    await this.runMutation(`renameList ${listId} -> ${title}`, () =>
+      renameBoardList(
+        this.document.getText(),
+        listId,
+        title,
+        config.lists.map(serializeList),
       ),
     );
   }
