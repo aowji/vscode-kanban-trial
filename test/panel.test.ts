@@ -95,6 +95,7 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
     activeEditor: undefined as any,
     output: [] as string[],
     docChangeHandlers: [] as ((event: { document: FakeDocument }) => void)[],
+    fileWatchers: [] as any[],
     provider: undefined as
       | { resolveCustomTextEditor(document: any, panel: any, token: any): void }
       | undefined,
@@ -137,6 +138,7 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
     harness.panelsCreated += 1;
     return {
       webview,
+      visible: true,
       viewColumn: 1 as number | undefined,
       iconPath: undefined as unknown,
       reveal: () => undefined,
@@ -250,12 +252,29 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
         return [...documents.values()];
       },
       getConfiguration: () => ({ get: (key: string) => config[key] }),
-      createFileSystemWatcher: () => ({
-        onDidChange: () => ({ dispose() {} }),
-        onDidCreate: () => ({ dispose() {} }),
-        onDidDelete: () => ({ dispose() {} }),
-        dispose: () => undefined,
-      }),
+      createFileSystemWatcher: (pattern: unknown) => {
+        const watcher = {
+          pattern,
+          changeHandlers: [] as (() => void)[],
+          createHandlers: [] as (() => void)[],
+          deleteHandlers: [] as (() => void)[],
+          onDidChange(handler: () => void) {
+            watcher.changeHandlers.push(handler);
+            return { dispose() {} };
+          },
+          onDidCreate(handler: () => void) {
+            watcher.createHandlers.push(handler);
+            return { dispose() {} };
+          },
+          onDidDelete(handler: () => void) {
+            watcher.deleteHandlers.push(handler);
+            return { dispose() {} };
+          },
+          dispose: () => undefined,
+        };
+        harness.fileWatchers.push(watcher);
+        return watcher;
+      },
       findFiles: async () => [],
       onDidChangeConfiguration: (_handler: unknown, _this: unknown, list: unknown) =>
         addDisposable(list, { dispose() {} }),
@@ -302,6 +321,17 @@ function createFakeVscode(root: string, config: Record<string, unknown>) {
     registered,
     createPanel,
     fireDocChange,
+    fireFileEvent: (kind: 'change' | 'create' | 'delete') => {
+      const watcher = harness.fileWatchers[0];
+      if (!watcher) return;
+      const handlers =
+        kind === 'change'
+          ? watcher.changeHandlers
+          : kind === 'create'
+            ? watcher.createHandlers
+            : watcher.deleteHandlers;
+      for (const handler of handlers) handler();
+    },
     send: (message: any) => onMessage?.(message),
     disposePanel: () => onDispose?.(),
   };
@@ -418,6 +448,32 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       firstState.view.lists.map((list: any) => list.id),
       ['__unassigned', 'backlog', 'todo', 'in-progress', 'review', 'done'],
     );
+
+    // The watcher covers the board folder, and a new document invalidates the
+    // cached scan so the card appears.
+    assert.ok(fake.harness.fileWatchers[0]?.pattern instanceof fake.vscode.RelativePattern);
+    const statesBeforeNewDoc = fake.harness.messages.filter((m) => m.type === 'state').length;
+    await fs.writeFile(
+      nodePath.join(root, 'docs', 'from-watcher.md'),
+      '# From the watcher\n\nNew card.\n',
+    );
+    fake.fireFileEvent('create');
+    const afterWatcher = await waitFor(() => {
+      const states = fake.harness.messages.filter((m) => m.type === 'state');
+      const last = states[states.length - 1]?.state;
+      return states.length > statesBeforeNewDoc && last?.view.totalCards === 3 ? last : undefined;
+    }, 'refresh after a document is created');
+    assert.equal(afterWatcher.view.totalCards, 3);
+
+    // An explicit reload also rescans, which is the escape hatch for a missed event.
+    await fs.writeFile(nodePath.join(root, 'docs', 'manual-reload.md'), '# Manual reload\n');
+    const statesBeforeReload = fake.harness.messages.filter((m) => m.type === 'state').length;
+    fake.send({ type: 'refresh' });
+    await waitFor(() => {
+      const states = fake.harness.messages.filter((m) => m.type === 'state');
+      const last = states[states.length - 1]?.state;
+      return states.length > statesBeforeReload && last?.view.totalCards === 4 ? true : undefined;
+    }, 'refresh after an explicit reload');
 
     // Moving a card rewrites only the board file.
     fake.send({ type: 'moveCard', path: nodePath.join(root, 'fix-login.md'), listId: 'review' });

@@ -6,8 +6,9 @@ import {
   isScalar,
   isSeq,
   parseDocument,
+  stringify,
 } from 'yaml';
-import { parseLists, type BoardList } from './board';
+import { parseLists, UNASSIGNED_LIST_ID, type BoardList } from './board';
 
 const BOARD_FILE_SUFFIXES = ['.kb.yaml', '.kb.yml'] as const;
 export const DEFAULT_BOARD_FILE_NAME = 'kanban.kb.yaml';
@@ -137,6 +138,7 @@ export function addBoardList(
 ): StoreUpdate {
   const tag = entry.trim();
   if (!tag) throw new Error('List name cannot be empty.');
+  assertNotReserved(tag);
 
   const doc = parseBoardForWrite(text);
   const seq = ensureListsSeq(doc, options.fallbackLists ?? []);
@@ -184,6 +186,7 @@ export function renameListTag(
   const targetId = listId.trim().toLowerCase();
   const tag = newTag.trim();
   if (!tag) throw new Error('List name cannot be empty.');
+  assertNotReserved(tag);
 
   const doc = parseBoardForWrite(text);
   const seq = ensureListsSeq(doc, fallbackLists);
@@ -391,7 +394,19 @@ export function boardFileTemplate(lists: readonly string[] = []): string {
   return lines.join('\n');
 }
 
-/** Quotes only when needed, e.g. a tag with a colon or a leading `#`. */
+/** The reserved id belongs to the built-in "No status" column. */
+function assertNotReserved(tag: string): void {
+  if (tag.toLowerCase() === UNASSIGNED_LIST_ID) {
+    throw new Error(`List name "${tag}" is reserved.`);
+  }
+}
+
+/**
+ * Quotes when the raw text would not read back as the same string, e.g. a tag
+ * with a colon, a leading `#`, or one that looks like `true` / `null` / a
+ * number. Multi-line values fall back to a JSON (YAML-compatible) string.
+ */
 function quoteYamlScalar(value: string): string {
-  return /[:#]/.test(value) || /^\s|\s$/.test(value) ? JSON.stringify(value) : value;
+  const dumped = stringify(value, { lineWidth: 0 }).trimEnd();
+  return dumped === value ? value : JSON.stringify(value);
 }

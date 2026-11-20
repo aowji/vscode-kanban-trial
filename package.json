@@ -151,9 +151,10 @@
     "vscode:prepublish": "node esbuild.mjs --minify",
     "compile": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.webview.json",
+    "typecheck:webview": "tsc -p tsconfig.webview.json",
     "build:tests": "node esbuild.mjs --tests",
-    "test": "node esbuild.mjs --tests && node --test \"dist-test/*.test.js\""
+    "test": "node esbuild.mjs --tests && node test/run-tests.mjs"
   },
   "dependencies": {
     "yaml": "^2.8.1"

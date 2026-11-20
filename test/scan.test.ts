@@ -136,9 +136,26 @@ test('deriveTitle prefers a heading and falls back to the file name', () => {
   assert.equal(deriveTitle('#\n', 'from-name.markdown'), 'from-name');
 });
 
+test('deriveTitle ignores headings inside fenced code blocks', () => {
+  assert.equal(
+    deriveTitle('```\n# not a title\n```\n\n# Real title\n', 'fallback.md'),
+    'Real title',
+  );
+  assert.equal(deriveTitle('~~~\n# not a title\n~~~\n\nbody\n', 'fallback.md'), 'fallback');
+});
+
 test('deriveSummary stops at the first blank line and strips markup', () => {
   const summary = deriveSummary('# Title\n\nSome **bold** and [link](http://x) text.\n\n- bullet\n');
   assert.equal(summary, 'Some bold and link text.');
+});
+
+test('deriveSummary keeps underscores inside words and code spans', () => {
+  assert.equal(
+    deriveSummary('Call snake_case_name and _emphasised_ text.'),
+    'Call snake_case_name and emphasised text.',
+  );
+  assert.equal(deriveSummary('Use my_file_name.md here.'), 'Use my_file_name.md here.');
+  assert.equal(deriveSummary('Run `__init__` first.'), 'Run __init__ first.');
 });
 
 test('deriveSummary truncates long paragraphs', () => {

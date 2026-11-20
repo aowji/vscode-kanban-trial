@@ -192,6 +192,11 @@ test('boardFileTemplate quotes tags that need it', () => {
   assert.deepEqual(listTags(template), ['#inbox']);
 });
 
+test('boardFileTemplate keeps tags that look like other YAML scalars', () => {
+  const tags = ['true', 'null', '123', '- x', 'a: b', '#inbox'];
+  assert.deepEqual(listTags(boardFileTemplate(tags)), tags);
+});
+
 test('boardFileTemplate defaults to no custom lists (No status only)', () => {
   const template = boardFileTemplate();
   assert.ok(template.includes('lists: []'));
@@ -210,6 +215,7 @@ test('addBoardList appends a list and rejects duplicates', () => {
 
   assert.throws(() => addBoardList(second.text, 'TODO'), /already exists/i);
   assert.throws(() => addBoardList(second.text, '   '), /empty/i);
+  assert.throws(() => addBoardList(second.text, '__unassigned'), /reserved/i);
 });
 
 test('addBoardList inserts at the requested position', () => {
@@ -348,6 +354,7 @@ test('renameListTag is inert for no-ops, unknown lists and empty names', () => {
 test('renameListTag refuses to collide with another list', () => {
   const start = 'version: 1\nlists:\n  - todo\n  - done\ncards: {}\n';
   assert.throws(() => renameListTag(start, 'todo', 'DONE'), /already exists/i);
+  assert.throws(() => renameListTag(start, 'todo', '__unassigned'), /reserved/i);
 });
 
 test('renameListTag seeds lists from the fallback when the key is missing', () => {

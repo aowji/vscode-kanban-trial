@@ -46,7 +46,10 @@ export interface BoardView {
 export const UNASSIGNED_LIST_ID = '__unassigned';
 export const UNASSIGNED_LIST_TITLE = 'No status';
 
-/** Trims entries, drops blanks, keeps the first spelling of a duplicated tag. */
+/**
+ * Trims entries, drops blanks and the reserved "No status" id, and keeps the
+ * first spelling of a duplicated tag.
+ */
 export function parseLists(raw: readonly string[] | undefined): BoardList[] {
   const lists: BoardList[] = [];
   const seen = new Set<string>();
@@ -55,6 +58,7 @@ export function parseLists(raw: readonly string[] | undefined): BoardList[] {
     const tag = entry.trim();
     if (!tag) continue;
     const id = tag.toLowerCase();
+    if (id === UNASSIGNED_LIST_ID) continue;
     if (seen.has(id)) continue;
     seen.add(id);
     lists.push({ id, tag });

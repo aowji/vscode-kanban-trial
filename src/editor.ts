@@ -10,7 +10,7 @@ import {
   type CardInput,
   type CardView,
 } from './core/board';
-import { scanDirectory, toPosixPath } from './core/scan';
+import { scanDirectory, toPosixPath, type ScanResult } from './core/scan';
 import {
   addBoardList,
   moveBoardList,
@@ -88,6 +88,9 @@ class KanbanEditor {
   private refreshing = false;
   private refreshQueued = false;
   private applyingEdit = false;
+  /** Last directory scan; reused while only the board file changes. */
+  private scan: ScanResult | undefined;
+  private scanStale = true;
   private disposed = false;
 
   constructor(
@@ -124,29 +127,48 @@ class KanbanEditor {
     // The board file itself: edits made here or in a text editor both refresh it.
     vscode.workspace.onDidChangeTextDocument(
       (event) => {
-        if (event.document.uri.toString() !== this.document.uri.toString()) return;
-        if (this.applyingEdit) return;
-        this.scheduleRefresh();
+        const uri = event.document.uri;
+        if (uri.toString() === this.document.uri.toString()) {
+          if (this.applyingEdit) return;
+          this.scheduleRefresh();
+          return;
+        }
+        // Unsaved buffers win over the copy on disk, so a document edit makes
+        // the cached scan stale even before the file is saved.
+        if (uri.scheme === 'file' && isMarkdownUnder(this.boardDir, uri.fsPath)) {
+          this.scanStale = true;
+        }
       },
       undefined,
       this.disposables,
     );
 
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{md,markdown}');
-    watcher.onDidChange(() => this.scheduleRefresh(), undefined, this.disposables);
-    watcher.onDidCreate(() => this.scheduleRefresh(), undefined, this.disposables);
-    watcher.onDidDelete(() => this.scheduleRefresh(), undefined, this.disposables);
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(this.boardDir), '**/*.{md,markdown}'),
+    );
+    const markStale = (): void => {
+      this.scanStale = true;
+      this.scheduleRefresh();
+    };
+    watcher.onDidChange(markStale, undefined, this.disposables);
+    watcher.onDidCreate(markStale, undefined, this.disposables);
+    watcher.onDidDelete(markStale, undefined, this.disposables);
     this.disposables.push(watcher);
 
     vscode.workspace.onDidChangeConfiguration(
       (event) => {
-        if (event.affectsConfiguration(CONFIG_SECTION)) this.scheduleRefresh(0);
+        if (!event.affectsConfiguration(CONFIG_SECTION)) return;
+        this.scanStale = true;
+        this.scheduleRefresh(0);
       },
       undefined,
       this.disposables,
     );
     vscode.workspace.onDidChangeWorkspaceFolders(
-      () => this.scheduleRefresh(0),
+      () => {
+        this.scanStale = true;
+        this.scheduleRefresh(0);
+      },
       undefined,
       this.disposables,
     );
@@ -161,6 +183,9 @@ class KanbanEditor {
 
   private scheduleRefresh(delay = REFRESH_DEBOUNCE_MS): void {
     if (this.disposed) return;
+    // Scanning while the tab is hidden only burns IO; the view-state handler
+    // refreshes when the panel becomes visible again.
+    if (!this.panel.visible) return;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined;
@@ -204,11 +229,20 @@ class KanbanEditor {
     // A board file that defines `lists` (even as `[]`) owns its lists; the
     // setting is only the fallback when the key is missing entirely.
     const lists: BoardList[] = board.lists ?? config.lists;
-    const scanned = await scanDirectory(this.boardDir, {
-      excludeDirectories: config.excludeDirectories,
-      maxFiles: config.maxFiles,
-      readText: readTextPreferringOpenDocuments,
-    });
+    if (this.scanStale || !this.scan) {
+      this.scanStale = false;
+      try {
+        this.scan = await scanDirectory(this.boardDir, {
+          excludeDirectories: config.excludeDirectories,
+          maxFiles: config.maxFiles,
+          readText: readTextPreferringOpenDocuments,
+        });
+      } catch (error) {
+        this.scanStale = true;
+        throw error;
+      }
+    }
+    const scanned = this.scan;
 
     const cards: CardInput[] = [];
     const known = new Set<string>();
@@ -240,6 +274,8 @@ class KanbanEditor {
         else void this.refresh();
         return;
       case 'refresh':
+        // An explicit reload is the escape hatch for a missed file event.
+        this.scanStale = true;
         void this.refresh();
         return;
       case 'openAsText':
@@ -482,6 +518,18 @@ class KanbanEditor {
 function normalizePath(value: string): string {
   const normalized = value.replace(/\\/g, '/');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/** True for a Markdown document that the board's scan would include. */
+function isMarkdownUnder(directory: string, absPath: string): boolean {
+  if (!/\.(md|markdown)$/i.test(absPath)) return false;
+  const relative = nodePath.relative(directory, absPath);
+  return (
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${nodePath.sep}`) &&
+    !nodePath.isAbsolute(relative)
+  );
 }
 
 /** Configured lists as plain tags, used to seed a board file without `lists:`. */

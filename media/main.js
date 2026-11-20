@@ -1,3 +1,4 @@
+// @ts-check
 (function () {
   'use strict';
 
@@ -8,20 +9,23 @@
       ? acquireVsCodeApi()
       : { postMessage() {}, getState() { return undefined; }, setState() {} };
 
-  /** @type {{ view: any, context: any } | null} */
+  /** @type {{ view: any, meta: any } | null} */
   let model = null;
   let busy = false;
+  /** Last refresh failure reported by the extension, cleared by the next state. */
+  let lastError = '';
   let query = '';
   const tagFilter = new Set();
   let dragCardId = null;
   let dragListId = null;
   let menu = null;
+  let menuAnchor = null;
   let addingList = false;
   let addListDraft = '';
   /** Lists narrowed to a strip; a view preference, so it lives in webview state. */
   const collapsedLists = new Set();
 
-  const app = document.getElementById('app');
+  const app = /** @type {HTMLElement} */ (document.getElementById('app'));
 
   function esc(value) {
     return String(value === null || value === undefined ? '' : value).replace(
@@ -89,10 +93,10 @@
       '<div class="tagbar" id="tagbar"></div>',
       '<div class="notice" id="notice" hidden></div>',
       '<div class="board" id="board"></div>',
-      '<div class="placeholder" id="placeholder" hidden></div>',
     ].join('');
 
-    const search = document.getElementById('search');
+    const search = /** @type {HTMLInputElement | null} */ (document.getElementById('search'));
+    if (!search) return;
     search.value = query;
     search.addEventListener('input', () => {
       query = search.value.trim();
@@ -116,7 +120,6 @@
     renderTagbar();
     renderNotice();
     renderLists();
-    renderPlaceholder();
     setBusy(busy);
   }
 
@@ -185,20 +188,23 @@
 
   function renderNotice() {
     const notice = document.getElementById('notice');
-    if (!notice || !model) return;
+    if (!notice) return;
     const messages = [];
-    if (model.meta.storeError) messages.push(model.meta.storeError);
-    if (model.meta.truncated) {
-      messages.push(
-        'Only the first ' + model.meta.fileCount +
-        ' Markdown files were scanned. Raise markdownKanban.maxFiles to see more.',
-      );
-    }
-    if (model.meta.staleEntries > 0) {
-      messages.push(
-        model.meta.staleEntries +
-        ' saved card(s) point at documents that no longer exist; they are ignored until the document comes back.',
-      );
+    if (lastError) messages.push(lastError);
+    if (model) {
+      if (model.meta.storeError) messages.push(model.meta.storeError);
+      if (model.meta.truncated) {
+        messages.push(
+          'Only the first ' + model.meta.fileCount +
+          ' Markdown files were scanned. Raise markdownKanban.maxFiles to see more.',
+        );
+      }
+      if (model.meta.staleEntries > 0) {
+        messages.push(
+          model.meta.staleEntries +
+          ' saved card(s) point at documents that no longer exist; they are ignored until the document comes back.',
+        );
+      }
     }
     notice.hidden = messages.length === 0;
     notice.textContent = messages.join(' ');
@@ -225,6 +231,7 @@
   }
 
   function listHtml(list) {
+    if (!model) return '';
     const collapsed = collapsedLists.has(list.id);
     const cards = list.cards.filter(cardMatchesFilters);
     const count = cards.length === list.cards.length
@@ -286,25 +293,29 @@
     if (!board || !model) return;
 
     const scrollTops = new Map();
-    board.querySelectorAll('.list-body').forEach((body) => scrollTops.set(body.dataset.list, body.scrollTop));
+    board.querySelectorAll('.list-body').forEach((body) => {
+      const element = /** @type {HTMLElement} */ (body);
+      scrollTops.set(element.dataset.list, element.scrollTop);
+    });
     const scrollLeft = board.scrollLeft;
 
     board.innerHTML = model.view.lists.map(listHtml).join('') + addListSlotHtml();
     board.scrollLeft = scrollLeft;
     board.querySelectorAll('.list-body').forEach((body) => {
-      const top = scrollTops.get(body.dataset.list);
-      if (top) body.scrollTop = top;
+      const element = /** @type {HTMLElement} */ (body);
+      const top = scrollTops.get(element.dataset.list);
+      if (top) element.scrollTop = top;
     });
 
     const form = board.querySelector('[data-add-form]');
     if (!form) return;
-    const input = form.querySelector('.add-list-input');
+    const input = /** @type {HTMLInputElement | null} */ (form.querySelector('.add-list-input'));
     if (input) {
       input.addEventListener('input', () => {
         addListDraft = input.value;
       });
       input.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
+        if (/** @type {KeyboardEvent} */ (event).key === 'Escape') {
           event.preventDefault();
           closeAddList();
         }
@@ -333,25 +344,8 @@
     renderLists();
   }
 
-  function renderPlaceholder() {
-    const placeholder = document.getElementById('placeholder');
-    if (!placeholder || !model) return;
-    const hasLists = model.view.lists.length > 0;
-    placeholder.hidden = hasLists;
-    document.getElementById('board').hidden = !hasLists;
-    if (hasLists) return;
-
-    placeholder.innerHTML = [
-      '<div class="placeholder-inner">',
-      '<h2>No lists configured</h2>',
-      '<p>Every <code>.md</code> file in <strong>' + esc(model.meta.folderName) +
-        '</strong> becomes a card. Add a list with <code>+ Add list</code>, or edit the YAML.</p>',
-      '</div>',
-    ].join('');
-  }
-
   function setBusy(value) {
-    const button = document.getElementById('btn-refresh');
+    const button = /** @type {HTMLButtonElement | null} */ (document.getElementById('btn-refresh'));
     if (!button) return;
     button.classList.toggle('spinning', value);
     button.disabled = value;
@@ -562,9 +556,12 @@
 
   /** Board lists in DOM order, minus the one being dragged. */
   function remainingLists() {
-    return [...document.querySelectorAll('.list')].filter(
-      (list) => list.dataset.list !== UNASSIGNED_LIST_ID && list.dataset.list !== dragListId,
-    );
+    return [...document.querySelectorAll('.list')].filter((list) => {
+      const element = /** @type {HTMLElement} */ (list);
+      return (
+        element.dataset.list !== UNASSIGNED_LIST_ID && element.dataset.list !== dragListId
+      );
+    });
   }
 
   /**
@@ -618,6 +615,7 @@
   }
 
   function optimisticMove(cardId, listId) {
+    if (!model) return;
     const from = model.view.lists.find((list) => list.cards.some((card) => card.absPath === cardId));
     const to = model.view.lists.find((list) => list.id === listId);
     if (!from || !to) return;
@@ -696,11 +694,12 @@
       button.setAttribute('role', 'menuitem');
       button.textContent = item.label;
       button.addEventListener('click', () => {
-        closeMenu();
+        closeMenu(true);
         item.run();
       });
       element.appendChild(button);
     }
+    element.addEventListener('keydown', onMenuKeyDown);
 
     document.body.appendChild(element);
     const rect = anchor.getBoundingClientRect();
@@ -710,19 +709,42 @@
     element.style.left = Math.max(8, left) + 'px';
 
     menu = element;
+    menuAnchor = anchor instanceof HTMLElement ? anchor : null;
+    const first = element.querySelector('.menu-item');
+    if (first instanceof HTMLElement) first.focus();
     setTimeout(() => document.addEventListener('click', onDocumentClick), 0);
+  }
+
+  function onMenuKeyDown(event) {
+    if (!menu) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenu(true);
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const items = [...menu.querySelectorAll('.menu-item')];
+    if (items.length === 0) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement);
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    const next = items[(current + step + items.length) % items.length];
+    if (next instanceof HTMLElement) next.focus();
   }
 
   function onDocumentClick(event) {
     if (menu && !menu.contains(event.target)) closeMenu();
   }
 
-  function closeMenu() {
+  function closeMenu(restoreFocus = false) {
     document.removeEventListener('click', onDocumentClick);
+    const anchor = menuAnchor;
+    menuAnchor = null;
     if (menu) {
       menu.remove();
       menu = null;
     }
+    if (restoreFocus && anchor && anchor.isConnected) anchor.focus();
   }
 
   // ------------------------------------------------------------------ plumbing
@@ -732,7 +754,7 @@
   }
 
   function restore() {
-    const saved = api.getState();
+    const saved = /** @type {any} */ (api.getState());
     if (!saved) return;
     if (typeof saved.query === 'string') query = saved.query;
     if (Array.isArray(saved.tags)) saved.tags.forEach((tag) => tagFilter.add(String(tag)));
@@ -747,10 +769,17 @@
     if (data.type === 'state') {
       model = data.state;
       busy = false;
+      lastError = '';
       render();
     } else if (data.type === 'busy') {
       busy = Boolean(data.busy);
       setBusy(busy);
+    } else if (data.type === 'error') {
+      busy = false;
+      lastError = 'Could not refresh the board: ' + (data.message || 'unknown error');
+      ensureShell();
+      renderNotice();
+      setBusy(false);
     }
   });
 

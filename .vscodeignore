@@ -4,7 +4,11 @@ src/**
 test/**
 esbuild.mjs
 tsconfig.json
+tsconfig.webview.json
 .gitignore
+dist-test/**
+package-lock.json
 **/*.map
 **/*.ts
+**/*.log
 node_modules/**

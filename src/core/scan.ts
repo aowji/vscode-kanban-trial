@@ -40,7 +40,7 @@ export interface ScannedCard {
   error?: string;
 }
 
-interface ScanResult {
+export interface ScanResult {
   cards: ScannedCard[];
   fileCount: number;
   truncated: boolean;
@@ -146,12 +146,24 @@ export function stripFrontmatter(text: string): { body: string; error?: string }
     : { body };
 }
 
-/** First level-1 heading, then the file name. */
+/** First level-1 heading outside fenced code, then the file name. */
 export function deriveTitle(body: string, fileName: string): string {
-  const heading = /^[ \t]*#[ \t]+(.+?)[ \t]*#*[ \t]*$/m.exec(body);
-  if (heading && heading[1].trim()) return heading[1].trim();
+  let inFence = false;
+  for (const line of body.split(/\r\n|\n|\r/)) {
+    if (isFenceLine(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const heading = /^[ \t]*#[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
+    if (heading && heading[1].trim()) return heading[1].trim();
+  }
   const extension = nodePath.extname(fileName).toLowerCase();
   return MARKDOWN_EXTENSIONS.has(extension) ? fileName.slice(0, -extension.length) : fileName;
+}
+
+function isFenceLine(line: string): boolean {
+  return /^(```|~~~)/.test(line.trim());
 }
 
 /** First paragraph of the body, stripped of Markdown noise and truncated. */
@@ -163,7 +175,7 @@ export function deriveSummary(body: string, maxLength = 200): string {
 
   for (const raw of body.split(/\r\n|\n|\r/)) {
     const line = raw.trim();
-    if (/^(```|~~~)/.test(line)) {
+    if (isFenceLine(line)) {
       if (started) break;
       inFence = !inFence;
       continue;
@@ -196,14 +208,24 @@ export function deriveSummary(body: string, maxLength = 200): string {
 }
 
 function cleanInline(line: string): string {
-  return line
+  // Inline code must survive emphasis stripping, otherwise `__init__` or
+  // `snake_case` would lose their underscores; park each span and restore it.
+  const code: string[] = [];
+  const text = line
+    .replace(/`([^`]+)`/g, (_, value: string) => {
+      code.push(value);
+      return `\u0000${code.length - 1}\u0000`;
+    })
     .replace(/^>\s*/, '')
     .replace(/^([-*+]|\d+[.)])\s+/, '')
     .replace(/<[^>]+>/g, '')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/(\*\*|__)(.+?)\1/g, '$2')
-    .replace(/(\*|_)(.+?)\1/g, '$2')
-    .replace(/`([^`]+)`/g, '$1')
-    .trim();
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '$1')
+    .replace(/(?<![\w_])__(?=\S)(.+?)(?<=\S)__(?![\w_])/g, '$1')
+    .replace(/\*(?=\S)(.+?)(?<=\S)\*/g, '$1')
+    // Underscore emphasis may not start or end inside a word, which keeps
+    // snake_case and file_name.md intact.
+    .replace(/(?<![\w_])_(?=\S)(.+?)(?<=\S)_(?![\w_])/g, '$1');
+  return text.replace(/\u0000(\d+)\u0000/g, (_, index: string) => code[Number(index)]).trim();
 }

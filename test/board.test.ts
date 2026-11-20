@@ -38,6 +38,10 @@ test('parseLists drops duplicates and returns empty when empty', () => {
   assert.deepEqual(parseLists(undefined), []);
 });
 
+test('parseLists never exposes the reserved No status id as a list', () => {
+  assert.deepEqual(parseLists(['__unassigned', 'todo']).map((list) => list.id), ['todo']);
+});
+
 test('buildBoardView names each column after its tag', () => {
   const view = buildBoardView([], { lists: parseLists(['Backlog', 'TODO']) });
   assert.deepEqual(
