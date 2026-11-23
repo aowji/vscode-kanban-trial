@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as nodePath from 'node:path';
+import picomatch from 'picomatch';
 import * as vscode from 'vscode';
 import {
   buildBoardView,
@@ -19,6 +20,7 @@ import {
   readBoard,
   removeBoardList,
   renameListTag,
+  setBoardInclude,
   setCardTags,
   toCardKey,
   type StoreUpdate,
@@ -40,6 +42,8 @@ interface BoardState {
     fileCount: number;
     truncated: boolean;
     storeError?: string;
+    /** Glob filter in effect for this board; drives the toolbar input. */
+    includeGlobs: string[];
     /** Board entries whose document no longer exists. */
     staleEntries: number;
   };
@@ -52,6 +56,8 @@ interface FromWebviewMessage {
   entry?: string;
   /** Insert position for `addList`, and destination for `moveList`. */
   index?: number;
+  /** Replacement include globs from the toolbar filter. */
+  globs?: string[];
 }
 
 /**
@@ -248,9 +254,16 @@ class KanbanEditor {
 
     const cards: CardInput[] = [];
     const known = new Set<string>();
+    // A document recorded in the board file is always shown; only documents
+    // with no entry are discovered through the include globs into "No status".
+    const includeMatcher = board.include.length
+      ? picomatch(board.include, { dot: true, nonegate: true })
+      : null;
     for (const card of scanned.cards) {
       const key = toCardKey(card.relPath);
       known.add(key);
+      const recorded = board.cardTags.has(key);
+      if (!recorded && includeMatcher && !includeMatcher(card.relPath)) continue;
       cards.push({ ...card, tags: board.cardTags.get(key) ?? [] });
     }
     const staleEntries = [...board.cardTags.keys()].filter((key) => !known.has(key)).length;
@@ -264,9 +277,21 @@ class KanbanEditor {
         fileCount: scanned.fileCount,
         truncated: scanned.truncated,
         storeError: board.error,
+        includeGlobs: board.include,
         staleEntries,
       },
     };
+  }
+
+  /**
+   * Saves the toolbar glob filter into the board file's `include:` key. Like
+   * the other board mutations, only the board document is written.
+   */
+  private async setIncludeGlobs(rawGlobs: readonly unknown[]): Promise<void> {
+    const globs = rawGlobs.filter((glob): glob is string => typeof glob === 'string');
+    await this.runMutation('setIncludeGlobs', () =>
+      setBoardInclude(this.document.getText(), globs),
+    );
   }
 
   private async onMessage(message: FromWebviewMessage): Promise<void> {
@@ -279,6 +304,9 @@ class KanbanEditor {
         // An explicit reload is the escape hatch for a missed file event.
         this.scanStale = true;
         void this.refresh();
+        return;
+      case 'setIncludeGlobs':
+        if (Array.isArray(message.globs)) await this.setIncludeGlobs(message.globs);
         return;
       case 'openAsText':
         await KanbanEditorProvider.openAsText(this.document.uri);

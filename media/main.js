@@ -22,6 +22,8 @@
   let menuAnchor = null;
   let addingList = false;
   let addListDraft = '';
+  /** Set when Escape resets the glob input, so blur does not save the draft. */
+  let globDraftCancelled = false;
   /** Lists narrowed to a strip; a view preference, so it lives in webview state. */
   const collapsedLists = new Set();
 
@@ -76,6 +78,56 @@
     return haystack.indexOf(query.toLowerCase()) !== -1;
   }
 
+  /** Globs that currently decide which documents reach the board. */
+  function activeGlobs() {
+    const globs = model && model.meta ? model.meta.includeGlobs : undefined;
+    return Array.isArray(globs) ? globs : [];
+  }
+
+  /** Comma-separated globs; commas inside `{}`, `[]` or `()` stay in the glob. */
+  function splitGlobs(value) {
+    const parts = [];
+    let current = '';
+    let depth = 0;
+    for (const char of String(value)) {
+      if (char === '{' || char === '[' || char === '(') depth += 1;
+      else if ((char === '}' || char === ']' || char === ')') && depth > 0) depth -= 1;
+      if (char === ',' && depth === 0) {
+        parts.push(current);
+        current = '';
+        continue;
+      }
+      current += char;
+    }
+    parts.push(current);
+
+    const globs = [];
+    for (const part of parts) {
+      const glob = part.trim();
+      if (glob && globs.indexOf(glob) === -1) globs.push(glob);
+    }
+    return globs;
+  }
+
+  /** Shows the saved filter; never overwrites what the user is typing. */
+  function syncGlobFilter() {
+    const input = /** @type {HTMLInputElement | null} */ (document.getElementById('glob-filter'));
+    if (!input || document.activeElement === input) return;
+    input.value = activeGlobs().join(', ');
+  }
+
+  function applyGlobFilter(input) {
+    const next = splitGlobs(input.value);
+    const current = activeGlobs();
+    const unchanged =
+      next.length === current.length && next.every((glob, index) => glob === current[index]);
+    if (unchanged) {
+      input.value = current.join(', ');
+      return;
+    }
+    api.postMessage({ type: 'setIncludeGlobs', globs: next });
+  }
+
   // ---------------------------------------------------------------- rendering
 
   function ensureShell() {
@@ -84,6 +136,7 @@
     app.innerHTML = [
       '<div class="toolbar">',
       '<div class="search"><input id="search" type="search" placeholder="Search titles, tags and paths" aria-label="Search cards" autocomplete="off" spellcheck="false" /></div>',
+      '<div class="glob-filter"><input id="glob-filter" type="text" placeholder="No glob filter" title="Only documents without a list status match these globs. Comma separated; empty means all documents. Saved to the board file as include:." aria-label="Document glob filter" autocomplete="off" spellcheck="false" /></div>',
       '<div class="stats" id="stats"></div>',
       '<div class="actions">',
       '<button id="btn-refresh" class="icon-button" type="button" title="Reload the board" aria-label="Reload the board">&#x21bb;</button>',
@@ -105,6 +158,31 @@
       renderStats();
     });
 
+    const globFilter = /** @type {HTMLInputElement | null} */ (
+      document.getElementById('glob-filter')
+    );
+    if (globFilter) {
+      globFilter.addEventListener('keydown', (event) => {
+        if (event.isComposing) return;
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          globFilter.blur();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          globDraftCancelled = true;
+          globFilter.blur();
+        }
+      });
+      globFilter.addEventListener('blur', () => {
+        if (globDraftCancelled) {
+          globDraftCancelled = false;
+          syncGlobFilter();
+          return;
+        }
+        applyGlobFilter(globFilter);
+      });
+    }
+
     app.addEventListener('click', onClick);
     app.addEventListener('keydown', onKeyDown);
     app.addEventListener('dragstart', onDragStart);
@@ -116,6 +194,7 @@
 
   function render() {
     ensureShell();
+    syncGlobFilter();
     renderStats();
     renderTagbar();
     renderNotice();
@@ -779,6 +858,7 @@
       busy = false;
       lastError = 'Could not refresh the board: ' + (data.message || 'unknown error');
       ensureShell();
+      syncGlobFilter();
       renderNotice();
       setBusy(false);
     }

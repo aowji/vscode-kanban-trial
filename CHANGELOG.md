@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- 看板文件新增 `include:`：用 glob 搜索**未被 `cards:` 记录**的文档，命中的才作为 “No status” 卡片出现；`cards:` 里记录过的卡片始终显示，不受 glob 影响
+- 看板顶部新增 Glob 过滤器输入框（没有设置时为空），回车或失焦保存回 `.kb.yaml`，Escape 取消；逗号分隔，括号里的逗号不会被拆开
+- 新建看板的模板写入 `include: []`
+- 文档扫描改用 globby 遍历、picomatch 做相对路径匹配；删除自研 glob 实现，并移除 `markdownKanban.includeGlobs` / `markdownKanban.excludeGlobs` 设置
+
 ## 0.1.0
 
 - 首次发布

@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import * as nodePath from 'node:path';
+import { globbyStream } from 'globby';
 
 export const DEFAULT_EXCLUDED_DIRS: readonly string[] = [
   'node_modules',
@@ -22,6 +23,7 @@ export const DEFAULT_EXCLUDED_DIRS: readonly string[] = [
 ];
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
+const MARKDOWN_PATTERNS: readonly string[] = ['**/*.md', '**/*.markdown'];
 
 interface ScanOptions {
   excludeDirectories?: readonly string[];
@@ -55,36 +57,41 @@ export async function collectMarkdownFiles(
   directory: string,
   options: ScanOptions = {},
 ): Promise<{ files: string[]; truncated: boolean }> {
-  const excluded = new Set(
-    (options.excludeDirectories ?? DEFAULT_EXCLUDED_DIRS).map((dir) => dir.toLowerCase()),
-  );
   const maxFiles = Math.max(1, options.maxFiles ?? 3000);
+  // `**/name/**` matches the excluded folders at any depth.
+  const ignore = (options.excludeDirectories ?? DEFAULT_EXCLUDED_DIRS).map(
+    (dir) => `**/${escapeGlobSegment(dir)}/**`,
+  );
   const files: string[] = [];
-  const pending: string[] = [directory];
 
-  while (pending.length > 0) {
-    const dir = pending.pop()!;
-    let entries;
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const full = nodePath.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (!excluded.has(entry.name.toLowerCase())) pending.push(full);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (!MARKDOWN_EXTENSIONS.has(nodePath.extname(entry.name).toLowerCase())) continue;
-      files.push(full);
-      if (files.length >= maxFiles) return { files: files.sort(), truncated: true };
-    }
+  const stream = globbyStream(MARKDOWN_PATTERNS, {
+    cwd: directory,
+    absolute: true,
+    onlyFiles: true,
+    dot: true,
+    // Documents are Markdown by extension, which is case-insensitive everywhere.
+    caseSensitiveMatch: false,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore,
+  });
+
+  for await (const entry of stream) {
+    // globby returns forward slashes even on Windows; normalize to the host
+    // separators so callers can compare paths against their own absolute paths.
+    const file = nodePath.normalize(String(entry));
+    if (!MARKDOWN_EXTENSIONS.has(nodePath.extname(file).toLowerCase())) continue;
+    // One match past the cap proves the stream was cut short.
+    if (files.length >= maxFiles) return { files: files.sort(), truncated: true };
+    files.push(file);
   }
 
   return { files: files.sort(), truncated: false };
+}
+
+/** Escapes a literal folder name so it can be embedded in a glob pattern. */
+function escapeGlobSegment(value: string): string {
+  return value.replace(/[\\{}()[\]*?]/g, '\\$&');
 }
 
 /** Reads every Markdown document under `directory` and derives its card fields. */

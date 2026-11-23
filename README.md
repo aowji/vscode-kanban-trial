@@ -8,6 +8,7 @@
 
 - **`*.kb.yaml` 的自定义编辑器**：双击（默认打开方式）直接进看板，等同于 Markdown 预览插件的体验；同一份文件随时可切回文本编辑 YAML
 - 递归扫描看板文件所在目录下的 `*.md` / `*.markdown`，自动忽略 `node_modules`、`.git`、`dist` 等
+- 看板文件里的 `include:` 用 glob 搜索**未被记录**的文档（如 `docs/**/*.md`，picomatch 语法），命中的才作为 `No status` 卡片出现；**`cards:` 里记录过的卡片一定显示**，不看 glob。看板顶部有一个 Glob 过滤器输入框（没设置时为空），可直接查看和修改，保存回 `.kb.yaml`
 - 卡片显示：标题、标签 chips、最后修改时间、正文首段摘要
 - 列由看板文件里的 `lists:` 决定；**默认只有 `No status` 一列**，其它 list 可在 `*.kb.yaml` 里写，也可以直接在看板界面增删：
   - 最右端 `+ Add list` 追加新列
@@ -55,6 +56,9 @@
 ```yaml
 # Markdown Kanban board.
 version: 1
+# 只影响未记录文档进 No status；cards: 里记录过的卡片总是显示。
+include:
+  - docs/**/*.md
 lists:
   - backlog
   - todo
@@ -71,6 +75,7 @@ cards:
 ```
 
 - `lists:` 定义这个看板自己的列与列序，**每一条就是一个 tag，列名原样显示**（不做大小写/连字符转换）。不写（缺 `lists` 键）时退回设置里的 `markdownKanban.defaultLists`；显式写 `lists: []` 则是"只有 No status"
+- `include:` 是一个 glob 列表，只决定哪些**没有被 `cards:` 记录**的文档出现在 `No status`；只要 YAML 里有记录就一定显示（即使 tag 不在 `lists:` 里、最终落在 `No status`，也不受 glob 限制）。不写或写 `include: []` = 不过滤。看板顶部的 Glob 过滤器直接编辑这一段
 - 改列名（列头 `⋮` → *Rename list*）= **改 tag 本身**：`lists:` 里那条，以及所有卡片上携带的同名 tag 一起改（大小写不敏感匹配），所以卡片会跟着新名字继续留在这一列
 - 清空列表（列头 `⋮` → *Clear list*）= 从该列所有卡片上移除这个 tag：卡片回到 `No status`（其它 tag 作为 chip 保留），`lists:` 里的列本身保留；只带这一个 tag 的卡片会删掉对应的记录
 - 列名大小写不敏感：`Todo` 与 `todo` 视为同一列，`lists:` 里重复的只保留第一个写法
@@ -96,6 +101,7 @@ cards:
 
 | 操作 | 效果 |
 | --- | --- |
+| 顶部 Glob 过滤器 | 输入逗号分隔的 glob，回车或失焦生效；留空 = 清除过滤。只搜索未被 YAML 记录的文档，保存回看板文件的 `include:` |
 | 点卡片 | 打开对应文档（同一张卡片反复点只会有同一个标签页，不会越开越多） |
 | 拖拽卡片 | 换列（写看板文件） |
 | 卡片聚焦后按 `Enter` / `Space` | 打开文档 |
@@ -113,7 +119,7 @@ cards:
 npm run compile          # 打包 dist/extension.js
 npm run watch            # 监听编译
 npm run typecheck        # tsc 类型检查（扩展 + webview）
-npm test                 # 62 个测试：文档扫描与摘要 / 看板文件读写 / list 增删改名清空重排 / 分列 / 自定义编辑器集成
+npm test                 # 65 个测试：文档扫描与摘要 / 看板 include 读写与 No status 过滤 / 看板文件读写 / list 增删改名清空重排 / 分列 / 自定义编辑器集成
 npm run typecheck:webview # 只检查 media/main.js（@ts-check）
 ```
 

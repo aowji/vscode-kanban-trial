@@ -11,6 +11,7 @@ import {
   readBoard,
   removeBoardList,
   renameListTag,
+  setBoardInclude,
   setCardTags,
   toCardKey,
 } from '../src/core/store';
@@ -201,7 +202,36 @@ test('boardFileTemplate keeps tags that look like other YAML scalars', () => {
 test('boardFileTemplate defaults to no custom lists (No status only)', () => {
   const template = boardFileTemplate();
   assert.ok(template.includes('lists: []'));
+  assert.ok(template.includes('include: []'));
   assert.deepEqual(listTags(template), []);
+});
+
+test('readBoard reads the include globs and tolerates a bare string', () => {
+  assert.deepEqual(readBoard('include:\n  - docs/**/*.md\n  - notes/**\n').include, [
+    'docs/**/*.md',
+    'notes/**',
+  ]);
+  assert.deepEqual(readBoard('include: docs/**/*.md\n').include, ['docs/**/*.md']);
+  assert.deepEqual(readBoard('version: 1\n').include, []);
+});
+
+test('setBoardInclude writes the key and removes it when the globs are cleared', () => {
+  const start = '# keep me\nversion: 1\ninclude:\n  - old/**\nlists:\n  - todo\ncards: {}\n';
+  const written = setBoardInclude(start, ['docs/**/*.md', 'notes/**']);
+  assert.equal(written.changed, true);
+  assert.ok(written.text.includes('# keep me'));
+  assert.deepEqual(readBoard(written.text).include, ['docs/**/*.md', 'notes/**']);
+  assert.deepEqual(listTags(written.text), ['todo']);
+
+  assert.equal(setBoardInclude(written.text, ['docs/**/*.md', 'notes/**']).changed, false);
+
+  const cleared = setBoardInclude(written.text, []);
+  assert.ok(!cleared.text.includes('include:'));
+  assert.deepEqual(readBoard(cleared.text).include, []);
+  assert.deepEqual(listTags(cleared.text), ['todo']);
+
+  // Patterns starting with glob characters must round-trip as quoted scalars.
+  assert.deepEqual(readBoard(setBoardInclude('version: 1\n', ['*.md']).text).include, ['*.md']);
 });
 
 test('addBoardList appends a list and rejects duplicates', () => {

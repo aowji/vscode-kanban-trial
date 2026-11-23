@@ -2,7 +2,7 @@
   "name": "markdown-kanban",
   "displayName": "Markdown Kanban",
   "description": "Show the Markdown files of a folder as a GitLab-style issue board. Card status lives in a *.kb.yaml board file, so your documents are never modified.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "publisher": "markdown-kanban",
   "repository": {
@@ -161,10 +161,13 @@
     "test": "node esbuild.mjs --tests && node test/run-tests.mjs"
   },
   "dependencies": {
+    "globby": "^14.1.0",
+    "picomatch": "^4.0.7",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/picomatch": "^4.0.3",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"

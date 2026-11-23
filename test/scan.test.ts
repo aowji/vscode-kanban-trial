@@ -9,6 +9,7 @@ import {
   deriveTitle,
   scanDirectory,
   stripFrontmatter,
+  toPosixPath,
 } from '../src/core/scan';
 
 let root = '';
@@ -36,9 +37,16 @@ after(async () => {
   if (root) await fs.rm(root, { recursive: true, force: true });
 });
 
+/** collectMarkdownFiles with POSIX paths relative to the fixture root. */
+async function scanRelative(
+  options?: Parameters<typeof collectMarkdownFiles>[1],
+): Promise<{ relative: string[]; truncated: boolean }> {
+  const { files, truncated } = await collectMarkdownFiles(root, options);
+  return { relative: files.map((file) => toPosixPath(nodePath.relative(root, file))), truncated };
+}
+
 test('collectMarkdownFiles walks subdirectories and skips excluded folders', async () => {
-  const { files, truncated } = await collectMarkdownFiles(root);
-  const relative = files.map((file) => nodePath.relative(root, file).split(nodePath.sep).join('/'));
+  const { relative, truncated } = await scanRelative();
   assert.deepEqual(relative, [
     'notes/deep/bare-file.md',
     'notes/heading-card.markdown',
@@ -48,16 +56,26 @@ test('collectMarkdownFiles walks subdirectories and skips excluded folders', asy
 });
 
 test('collectMarkdownFiles honours the file cap', async () => {
-  const { files, truncated } = await collectMarkdownFiles(root, { maxFiles: 2 });
-  assert.equal(files.length, 2);
+  const { relative, truncated } = await scanRelative({ maxFiles: 2 });
+  assert.equal(relative.length, 2);
   assert.equal(truncated, true);
 });
 
 test('collectMarkdownFiles respects a custom exclusion list', async () => {
   // A custom list replaces the defaults, so node_modules is scanned again.
-  const { files } = await collectMarkdownFiles(root, { excludeDirectories: ['notes'] });
-  const relative = files.map((file) => nodePath.relative(root, file).split(nodePath.sep).join('/'));
+  const { relative } = await scanRelative({ excludeDirectories: ['notes'] });
   assert.deepEqual(relative, ['node_modules/pkg/ignored.md', 'todo-card.md']);
+});
+
+test('collectMarkdownFiles matches the Markdown extension case-insensitively', async () => {
+  const upper = nodePath.join(root, 'UPPER.MD');
+  await fs.writeFile(upper, '# upper\n');
+  try {
+    const { relative } = await scanRelative();
+    assert.ok(relative.includes('UPPER.MD'));
+  } finally {
+    await fs.rm(upper, { force: true });
+  }
 });
 
 test('scanDirectory returns titles, summaries and POSIX paths', async () => {

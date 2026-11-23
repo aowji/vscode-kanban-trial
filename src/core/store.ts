@@ -47,6 +47,8 @@ interface BoardFile {
   cardTags: Map<string, string[]>;
   /** Lists owned by this board, `undefined` when the file has no `lists` key. */
   lists?: BoardList[];
+  /** Globs that decide which untagged documents show in "No status". */
+  include: string[];
   error?: string;
 }
 
@@ -56,23 +58,42 @@ interface BoardFile {
  */
 export function readBoard(text: string): BoardFile {
   const cardTags = new Map<string, string[]>();
-  if (!text.trim()) return { cardTags };
+  if (!text.trim()) return { cardTags, include: [] };
 
   const parsed = parseBoardDoc(text);
-  if ('error' in parsed) return { cardTags, error: parsed.error };
+  if ('error' in parsed) return { cardTags, include: [], error: parsed.error };
 
   const data = parsed.doc.toJS();
-  if (!data || typeof data !== 'object') return { cardTags };
+  if (!data || typeof data !== 'object') return { cardTags, include: [] };
 
   const record = data as Record<string, unknown>;
+  const include = readInclude(record.include);
   const lists = readLists(record.lists);
   const cards = record.cards;
-  if (!cards || typeof cards !== 'object' || Array.isArray(cards)) return { cardTags, lists };
+  if (!cards || typeof cards !== 'object' || Array.isArray(cards)) {
+    return { cardTags, lists, include };
+  }
 
   for (const [key, value] of Object.entries(cards as Record<string, unknown>)) {
     cardTags.set(toCardKey(key), cardTagsFromEntry(value));
   }
-  return { cardTags, lists };
+  return { cardTags, lists, include };
+}
+
+/** `include: [docs/**]`; a bare `include: docs/**` counts as one pattern. */
+function readInclude(value: unknown): string[] {
+  return normalizeGlobs(Array.isArray(value) ? value : [value]);
+}
+
+/** Trims entries, drops blanks and duplicates, and keeps the written order. */
+function normalizeGlobs(values: readonly unknown[]): string[] {
+  const globs: string[] = [];
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const glob = value.trim();
+    if (glob && !globs.includes(glob)) globs.push(glob);
+  }
+  return globs;
 }
 
 /** `lists: [todo, review]`; `- {tag: todo}` objects are tolerated too. */
@@ -120,6 +141,30 @@ export function setCardTags(text: string, relPath: string, tags: string[]): Stor
     if (node && typeof node === 'object' && 'flow' in node) node.flow = false;
   }
 
+  return finishUpdate(doc, text);
+}
+
+/**
+ * Writes the board's document filter into `include:`. An empty list removes the
+ * key, which means "no filter". Nothing else in the file is rewritten.
+ */
+export function setBoardInclude(text: string, globs: readonly string[]): StoreUpdate {
+  const next = normalizeGlobs(globs);
+  const doc = parseBoardForWrite(text);
+  const current = readInclude(plainValue(doc.get('include', true)));
+  if (next.length === current.length && next.every((glob, index) => glob === current[index])) {
+    return noChange(text);
+  }
+
+  ensureBoardShape(doc);
+  if (next.length === 0) {
+    doc.delete('include');
+  } else {
+    const seq = new YAMLSeq();
+    for (const glob of next) seq.add(doc.createNode(glob));
+    seq.flow = false;
+    doc.set('include', seq);
+  }
   return finishUpdate(doc, text);
 }
 
@@ -465,6 +510,7 @@ export function boardFileTemplate(lists: readonly string[] = []): string {
     '# never in the documents themselves.',
     '# Add lists here (or from the board UI); a list is the tag its cards carry.',
     `version: ${BOARD_VERSION}`,
+    'include: []',
   ];
   if (lists.length > 0) {
     lines.push('lists:');

@@ -444,6 +444,7 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
     );
 
     assert.equal(firstState.meta.boardFileName, 'kanban.kb.yaml');
+    assert.deepEqual(firstState.meta.includeGlobs, []);
     assert.equal(firstState.view.totalCards, 2);
     assert.deepEqual(
       firstState.view.lists.map((list: any) => list.id),
@@ -567,7 +568,9 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
 
     // External edits to the board file refresh the webview.
     const statesBefore = fake.harness.messages.filter((m) => m.type === 'state').length;
-    boardDocument.replaceText('version: 1\nlists:\n  - design\ncards: {}\n');
+    boardDocument.replaceText(
+      'version: 1\nlists:\n  - design\ncards:\n  fix-login.md:\n    tags:\n      - leftover\n',
+    );
     fake.fireDocChange(boardDocument);
     const afterExternal = await waitFor(() => {
       const states = fake.harness.messages.filter((m) => m.type === 'state');
@@ -575,6 +578,48 @@ test('*.kb.yaml opens as a custom editor that reads and writes the board file', 
       return states.length > statesBefore && last?.meta.storeError === undefined ? last : undefined;
     }, 'refresh after an external edit');
     assert.deepEqual(afterExternal.view.lists.map((list: any) => list.id), ['__unassigned', 'design']);
+
+    // A card recorded in the board file is always shown, even without a list
+    // tag; the glob only discovers documents that have no entry yet.
+    fake.send({ type: 'setIncludeGlobs', globs: ['nothing/**'] });
+    const filtered = await waitFor(() => {
+      const states = fake.harness.messages.filter((m) => m.type === 'state');
+      const last = states[states.length - 1]?.state;
+      return last?.meta.includeGlobs?.[0] === 'nothing/**' && last.view.totalCards === 1
+        ? last
+        : undefined;
+    }, 'refresh after the glob filter changes');
+    assert.deepEqual(filtered.meta.includeGlobs, ['nothing/**']);
+    assert.match(boardDocument.getText(), /include:\n {2}- nothing\/\*\*/);
+    assert.deepEqual(
+      filtered.view.lists
+        .flatMap((list: any) => list.cards)
+        .map((card: any) => [nodePath.basename(card.absPath), card.listId]),
+      [['fix-login.md', '__unassigned']],
+    );
+
+    // A matching glob discovers the unrecorded documents as No status cards.
+    fake.send({ type: 'setIncludeGlobs', globs: ['docs/**/*.md'] });
+    const broad = await waitFor(() => {
+      const states = fake.harness.messages.filter((m) => m.type === 'state');
+      const last = states[states.length - 1]?.state;
+      return last?.meta.includeGlobs?.[0] === 'docs/**/*.md' && last.view.totalCards === 4
+        ? last
+        : undefined;
+    }, 'refresh after the glob widens');
+    assert.equal(broad.view.lists.flatMap((list: any) => list.cards).length, 4);
+
+    // Clearing the input removes the key from the board file.
+    fake.send({ type: 'setIncludeGlobs', globs: [] });
+    const clearedFilter = await waitFor(() => {
+      const states = fake.harness.messages.filter((m) => m.type === 'state');
+      const last = states[states.length - 1]?.state;
+      return last?.meta.includeGlobs?.length === 0 && last.view.totalCards === 4
+        ? last
+        : undefined;
+    }, 'refresh after the glob filter is cleared');
+    assert.deepEqual(clearedFilter.meta.includeGlobs, []);
+    assert.ok(!boardDocument.getText().includes('include:'));
 
     // Opening a card three times reuses one editor group.
     const clicked = nodePath.join(root, 'fix-login.md');
